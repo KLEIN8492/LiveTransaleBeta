@@ -1,0 +1,117 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Captions</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+#wrap{position:absolute;display:flex;flex-direction:column;gap:.35em}
+.blk{overflow:hidden;width:100%;transition:opacity var(--fade) ease}
+.blk.hide{opacity:0}
+.txt{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;will-change:transform}
+.txt span{-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.txt span.new{animation:in var(--fade) ease}
+@keyframes in{from{opacity:0}to{opacity:1}}
+</style></head><body>
+<div id="wrap"><div class="blk" id="b1"><p class="txt"></p></div><div class="blk" id="b2"><p class="txt"></p></div></div>
+<script>
+const Q=new URLSearchParams(location.search), PRESET=Q.get('preset')||'default', PREVIEW=Q.has('preview');
+let presets={}, S={}, session={source:'en'}, hist=[], clearT=null, wipeT=null, partial=null;
+const SAMPLE={id:0,src:'This is how your captions will look on screen, with two rows of text.',
+  tr:{fr:'Voici à quoi ressembleront vos sous-titres à l’écran, sur deux lignes.',es:'Así se verán sus subtítulos en pantalla, con dos líneas de texto.',
+      de:'So sehen Ihre Untertitel auf dem Bildschirm aus.',it:'Ecco come appariranno i sottotitoli sullo schermo.',pt:'É assim que as legendas vão aparecer no ecrã.'}};
+function cast(v,ref){ if(typeof ref==='number') return +v; if(typeof ref==='boolean') return v==='1'||v==='true'; return v; }
+function hex2rgba(h,a){ const m=h.replace('#',''); const n=parseInt(m.length===3?m.split('').map(c=>c+c).join(''):m,16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
+// Outline as a ring of hard text-shadows instead of -webkit-text-stroke: shadows always paint BEHIND the
+// fill. text-stroke + paint-order needs Chromium 123+; OBS 30 (Chromium 103) and older vMix builds paint the
+// stroke on top of the glyph, so white subtitles came out black.
+function ring(w,color){ if(!w) return []; const out=[], rs=w>2?[w*0.5,w]:[w];
+  rs.forEach(r=>{ for(let i=0;i<16;i++){ const a=i*Math.PI/8; out.push(`${(Math.cos(a)*r).toFixed(2)}px ${(Math.sin(a)*r).toFixed(2)}px 0 ${color}`); } });
+  return out; }
+function style(){
+  const base=presets[PRESET]||presets.default||{}; S={...base};
+  for(const [k,v] of Q) if(k in base) S[k]=cast(v,base[k]);
+  // (re)load the Google Font whenever its name changes in Control, not only the first time
+  const gf=S.gfont?'https://fonts.googleapis.com/css2?family='+encodeURIComponent(S.gfont)+':ital,wght@0,400;0,700;0,900;1,400;1,700&display=swap':'';
+  let gl=document.getElementById('gf');
+  if(gf&&!gl){ gl=document.createElement('link'); gl.id='gf'; gl.rel='stylesheet'; document.head.appendChild(gl); }
+  if(gl&&gl.getAttribute('href')!==gf){ if(gf){ gl.href=gf; gl.onload=()=>{ render(); }; } else gl.remove(); }
+  const bg={transparent:'transparent',green:'#00b140',blue:'#0047bb',black:'#000'}[S.bg]||S.bg;
+  document.body.style.background = PREVIEW && S.bg==='transparent' ? 'repeating-conic-gradient(#555 0 25%,#777 0 50%) 0 0/40px 40px' : bg;
+  const W=document.getElementById('wrap'), st=W.style;
+  st.width=S.width+'%'; st.left=`calc(${(100-S.width)/2}% + ${S.offsetX}px)`; st.top=st.bottom=''; st.transform='';
+  if(S.pos==='top') st.top=S.offsetY+'px'; else if(S.pos==='middle'){ st.top=`calc(50% + ${S.offsetY}px)`; st.transform='translateY(-50%)'; } else st.bottom=S.offsetY+'px';
+  st.alignItems={left:'flex-start',center:'center',right:'flex-end'}[S.align]; st.textAlign=S.align;
+  document.documentElement.style.setProperty('--fade',S.fade+'s');
+  [['b1',S.size,S.color],['b2',S.size*S.size2,S.color2]].forEach(([id,size,color])=>{
+    const b=document.getElementById(id), p=b.firstChild, lh=S.lineHeight;
+    b.dataset.max=S.rows*size*lh + S.boxPadY*2 + 2; b.style.maxHeight=b.dataset.max+'px';
+    Object.assign(p.style,{fontFamily:S.gfont?`'${S.gfont}',${S.font}`:S.font,fontSize:size+'px',fontWeight:S.weight,
+      fontStyle:S.italic?'italic':'normal',textTransform:S.upper?'uppercase':'none',lineHeight:lh,letterSpacing:S.letterSpacing+'px',
+      color, textShadow:[...ring(S.outline,S.outlineColor),...(S.shadow?[`0 ${Math.max(1,S.shadow/2)}px ${S.shadow*2}px ${S.shadowColor}`]:[])].join(',')||'none',
+      background:S.box==='block'?hex2rgba(S.boxColor,S.boxOpacity):'transparent',
+      padding:S.box==='block'?`${S.boxPadY}px ${S.boxPadX}px`:'0',borderRadius:S.box==='block'?S.boxRadius+'px':'0'});
+    p.dataset.box=S.box;
+    p.style.textWrap=S.mode==='pop'?'balance':'wrap';  // pop-on: even 2-line subtitle blocks; roll-up: no re-flow while words arrive
+  });
+  document.getElementById('b2').style.display=S.lang2?'block':'none';
+  render();
+}
+function textOf(m,l){ return l===(m.lang||session.source) ? m.src : (m.tr&&m.tr[l]) || ''; }  // original if spoken in l
+function fill(id,lang,isNewId){
+  const p=document.getElementById(id).firstChild; if(!lang) return;
+  // FLIP: remember where each line sits now, so after re-rendering we can slide instead of jump
+  const before={}; p.querySelectorAll('span[data-id]').forEach(x=>before[x.dataset.id]=x.getBoundingClientRect().top);
+  let lines=hist.length||partial?hist.concat(partial?[partial]:[]):(PREVIEW?[SAMPLE]:[]);
+  if(S.mode==='pop') lines=lines.slice(-1); else lines=lines.slice(-6);
+  p.innerHTML='';
+  lines.forEach(m=>{ const t=textOf(m,lang)||(m===SAMPLE?m.src:''); if(!t) return;
+    const s=document.createElement('span'); s.textContent=t+' '; s.dataset.id=m===partial?'p':m.id;
+    if(S.box==='line') Object.assign(s.style,{background:hex2rgba(S.boxColor,S.boxOpacity),padding:`${S.boxPadY}px ${S.boxPadX}px`,borderRadius:S.boxRadius+'px'});
+    if(m.id===isNewId) s.className='new';
+    if(m===partial&&S.partialOpacity<1) s.style.opacity=S.partialOpacity;
+    if(S.mode==='pop'||S.box==='line') p.appendChild(document.createElement('br'));
+    p.appendChild(s);
+  });
+  if(p.firstChild&&p.firstChild.tagName==='BR') p.firstChild.remove();
+  // keep only what fits in N rows: drop oldest sentences, then show the bottom of a long one
+  const blk=document.getElementById(id), max=+blk.dataset.max; p.style.marginTop='0';
+  while(p.offsetHeight>max && p.querySelectorAll('span').length>1){ const f=p.querySelector('span'); const n=f.nextSibling; f.remove(); if(n&&n.tagName==='BR') n.remove(); }
+  // one sentence taller than N rows: scroll it up by whole lines so no clipped half-line peeks in at the top
+  if(p.offsetHeight>max){ const lh=parseFloat(p.style.fontSize)*S.lineHeight; p.style.marginTop=-Math.ceil((p.offsetHeight-max)/lh)*lh+'px'; }
+  roll(p,before);
+}
+// Roll-up: lines that moved up slide there over S.roll ms (broadcast caption feel); new rows rise in from below.
+function roll(p,before){
+  if(!S.roll) return;
+  const ref=[...p.querySelectorAll('span[data-id]')].find(x=>x.dataset.id in before && x.dataset.id!=='p')
+          || p.querySelector('span[data-id="p"]');
+  if(!ref || !(ref.dataset.id in before)) return;
+  const d=before[ref.dataset.id]-ref.getBoundingClientRect().top;
+  if(d<2 || d>parseFloat(p.style.fontSize)*S.lineHeight*4) return;  // no move, or a jump too big to animate
+  p.style.transition='none'; p.style.transform=`translateY(${d}px)`; p.offsetHeight;  // back to old spot…
+  p.style.transition=`transform ${S.roll}ms cubic-bezier(.2,.7,.3,1)`; p.style.transform='translateY(0)';  // …then glide
+}
+// NDI renderers (ndi_out.py on macOS, ndi_cdp.py via Edge/Chrome elsewhere) only snapshot when told the picture changed, for as long as the animation runs
+function dirty(ms){ try{ window.webkit.messageHandlers.lt.postMessage(ms||0); }catch(e){} try{ window.ltDirty&&window.ltDirty(String(ms||0)); }catch(e){} }
+// AI refinement of a line already shown: swap the words in place — no fade, no timers, never re-shows hidden text
+function refresh(){ fill('b1',S.lang); fill('b2',S.lang2); dirty(Math.max(S.roll||0,300)); }
+function render(newId){ fill('b1',S.lang,newId); fill('b2',S.lang2,newId); show(true); dirty(Math.max(S.roll||0,(S.fade||0)*1000)+50); }
+function show(on){ ['b1','b2'].forEach(id=>document.getElementById(id).classList.toggle('hide',!on));
+  // wipeT is cancelled too: a line arriving during the fade-out must not be erased from history 50 ms later
+  clearTimeout(clearT); clearTimeout(wipeT);
+  if(on && S.clear>0 && !PREVIEW && (hist.length||partial)) clearT=setTimeout(()=>{show(false); dirty(S.fade*1000+100);
+    wipeT=setTimeout(()=>{hist=[]; partial=null;},S.fade*1000+50)},S.clear*1000); }
+function connect(){
+  const ws=new WebSocket(`ws://${location.host}/ws?kind=overlay`);
+  ws.onmessage=e=>{ const m=JSON.parse(e.data);
+    if(m.type==='presets'){ presets=m.presets; style(); dirty(300); }
+    else if(m.type==='session'){ session=m; }
+    else if(m.type==='history'){ hist=m.lines.slice(-6); render(); if(!PREVIEW) show(false); }
+    else if(m.type==='line'){ const swap=!!partial; partial=null; hist.push(m); hist=hist.slice(-6); render(swap?undefined:m.id); } // replacing provisional text: swap in place, no fade
+    else if(m.type==='partial'){ const had=!!partial; partial=m.src&&(S.lang===(m.lang||session.source)||m.tr[S.lang])?{id:-1,src:m.src,lang:m.lang,tr:m.tr}:null; if(partial||had) render(); }
+    else if(m.type==='delete'){ hist=hist.filter(x=>x.id!==m.id); render(); }
+    else if(m.type==='update'){ const h=hist.find(x=>x.id===m.id); if(h){ h.tr=m.tr; refresh(); } }
+    else if(m.type==='clear'){ hist=[]; partial=null; render(); }
+  };
+  ws.onclose=()=>setTimeout(connect,1500);
+}
+connect();
+</script></body></html>

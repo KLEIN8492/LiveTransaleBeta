@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>QR card</title>
+<style>
+@page{size:A5 landscape;margin:10mm}
+body{font:13px -apple-system,"Helvetica Neue",Arial,sans-serif;color:#111;margin:0;padding:18px 24px}
+.cap{font:600 9px Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:#666;margin:0 0 4px}
+h1{font-size:24px;font-weight:600;margin:0 0 4px}.sub{font:11px Menlo,monospace;color:#444;text-transform:uppercase;letter-spacing:.06em;padding-bottom:12px;border-bottom:2px solid #111;margin-bottom:18px}
+.qrs{display:flex;gap:28px}.qrs>div{flex:1;border:1px solid #111;padding:12px;display:flex;gap:14px;align-items:center}
+.qrs img{width:150px;height:150px;flex:none}.n{font:700 22px Menlo,monospace}
+.step{font-size:14px;line-height:1.4}.step small{display:block;font:10px Menlo,monospace;color:#555;word-break:break-all;margin-top:4px}
+.note{margin-top:16px;font-size:11px;color:#444;line-height:1.7;border-top:1px solid #111;padding-top:10px}
+.nowifi .wifi{display:none}
+</style></head>
+<body class="{{HASWIFI}}">
+<p class="cap">Live translation</p>
+<h1>{{NAME}}</h1>
+<div class="sub">{{LANGS}}</div>
+<div class="qrs">
+  <div class="wifi"><img src="/qr/wifi.svg"><div class="step"><span class="n">1</span><br>Join Wi-Fi<br><b>{{SSID}}</b><small>{{PASS}}</small></div></div>
+  <div><img src="/qr/guest.svg"><div class="step"><span class="n wifi">2</span><br>Scan, pick your language<small>{{URL}}</small></div></div>
+</div>
+<div class="note">Earphones + VOICE to listen · Écouteurs + VOICE pour écouter · Auriculares + VOICE para escuchar<br>
+Keep your screen on · Gardez l’écran allumé · Mantenga la pantalla encendida</div>
+</body></html>

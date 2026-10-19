@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LiveTranslate · Control</title>
+<link rel="preload" href="/fonts/Geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/Archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<style>
+/* LiveTranslate Control — see /.impeccable.md. Near-black, almost monochrome; colour only for state
+   (live, signal, error). Hierarchy from type, weight and space. Legends in condensed caps, like a console's
+   scribble strips; values calm and large. Signature: the signal-flow strip on Setup. */
+:root{
+  --h:262;                                        /* faint cool tint for every neutral */
+  --bg:oklch(0.150 0.006 var(--h));--surface:oklch(0.178 0.006 var(--h));--raise:oklch(0.212 0.007 var(--h));
+  --sunk:oklch(0.128 0.005 var(--h));--line:oklch(0.255 0.007 var(--h));--line2:oklch(0.320 0.008 var(--h));
+  --text:oklch(0.935 0.004 var(--h));--muted:oklch(0.690 0.008 var(--h));--faint:oklch(0.600 0.008 var(--h));  /* ≥4.5:1 on --bg for 12px hints */
+  --sel:oklch(0.935 0.004 var(--h) / .07);        /* selection = light, not a hue */
+  --live:oklch(0.640 0.170 25);--ok:oklch(0.740 0.120 155);--warn:oklch(0.800 0.110 80);--bad:oklch(0.680 0.150 25);
+  --r:6px;--r-sm:5px;--ease:cubic-bezier(.25,1,.5,1);  /* ease-out-quart, every transition */
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;--s7:48px;--s8:64px;
+  --sans:"Geist",-apple-system,"Segoe UI",system-ui,sans-serif;
+  --legend:"Archivo","Arial Narrow",sans-serif;
+  --mono:"Geist Mono","SF Mono",Menlo,monospace;
+  color-scheme:dark;
+  /* older parts of the page still read these */
+  --p:var(--surface);--p2:var(--sunk);--b:var(--line);--fg:var(--text);--dim:var(--muted);--acc:var(--text)}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:216px}
+body{margin:0;background:var(--bg);color:var(--text);font:400 14px/1.6 var(--sans);-webkit-font-smoothing:antialiased;font-feature-settings:"ss01","cv11"}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:1px solid var(--text);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}html{scroll-behavior:auto}}
+.legend,.node .k,th,.head,label.lg{font:600 11px/1 var(--legend);font-stretch:72%;letter-spacing:.11em;text-transform:uppercase;color:var(--faint)}
+
+/* ---------- top bar + tabs */
+header{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:var(--s4);height:52px;padding:0 var(--s5);background:var(--bg);border-bottom:1px solid var(--line)}
+.brand{font:600 15px/1 var(--sans);letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+.brand i{width:7px;height:7px;border-radius:50%;background:var(--faint);transition:background .2s var(--ease)}
+body.live .brand i{background:var(--live)}
+#sname{color:var(--muted)}
+.pill{font:600 11px/1 var(--legend);font-stretch:72%;letter-spacing:.11em;text-transform:uppercase;padding:5px 8px;border-radius:4px;border:1px solid var(--line2);color:var(--muted)}
+.pill.run{border-color:var(--live);color:var(--live)}.pill.load{color:var(--text)}.pill.err{border-color:var(--bad);color:var(--bad)}
+.hmeter{display:flex;align-items:center;gap:var(--s2);color:var(--muted);font:12px var(--mono)}
+/* meters: segmented like a console LED ladder — the one place colour lives permanently */
+#meter{width:120px;height:5px;background:var(--sunk);overflow:hidden;border-radius:1px}
+#lvl,.lvl{height:100%;width:0;background:linear-gradient(90deg,var(--ok) 0 70%,var(--warn) 70% 88%,var(--live) 88%);background-size:var(--mw,120px) 100%;
+  -webkit-mask:repeating-linear-gradient(90deg,#000 0 3px,transparent 3px 4px);mask:repeating-linear-gradient(90deg,#000 0 3px,transparent 3px 4px);transition:width .08s linear}
+#inp{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.counts{margin-left:auto;color:var(--faint);font-size:13px;white-space:nowrap}
+nav{position:sticky;top:52px;z-index:9;display:flex;gap:var(--s5);padding:0 var(--s5);background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto}
+nav button{background:none;border:0;border-bottom:1px solid transparent;margin-bottom:-1px;color:var(--faint);padding:var(--s3) 0;cursor:pointer;font-weight:500;white-space:nowrap;transition:color .15s var(--ease)}
+nav button:hover{color:var(--muted)}nav button.on{color:var(--text);border-color:var(--text)}
+section{display:none;padding:var(--s6) var(--s5);max-width:1200px;margin:0 auto}section.on{display:block}
+
+/* ---------- controls */
+.btn{display:inline-flex;align-items:center;gap:var(--s2);height:34px;background:var(--raise);border:1px solid var(--line2);color:var(--text);padding:0 14px;border-radius:var(--r-sm);
+  cursor:pointer;font-weight:500;font-size:13px;text-decoration:none;white-space:nowrap;transition:background .15s var(--ease),border-color .15s var(--ease)}
+.btn:hover{background:oklch(0.245 0.008 var(--h))}.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.pri{background:var(--text);border-color:var(--text);color:var(--bg)}.btn.pri:hover{background:oklch(1 0 0 / .86)}
+.btn.red{background:none;border-color:var(--live);color:var(--live)}.btn.red:hover{background:oklch(0.640 0.170 25 / .1)}
+.btn.ghost{background:none;border-color:transparent;color:var(--muted)}.btn.ghost:hover{color:var(--text);background:var(--raise)}
+.btn.sm{height:28px;padding:0 10px;font-size:12.5px}
+.btn:active:not(:disabled),.choice:active:not(:disabled),.seg button:active{transform:translateY(1px)}
+@media (pointer:coarse){.btn,.btn.sm,.seg button,.chips label span,input[type=text],input[type=number],select{min-height:44px}.choice{padding-top:var(--s4);padding-bottom:var(--s4)}.choice::before{top:20px}}
+label{display:block;color:var(--muted);font-size:13px;margin:0 0 var(--s2)}
+.f{margin-bottom:var(--s4)}
+input[type=text],input[type=number],input[type=password],select,textarea{width:100%;height:36px;background:var(--sunk);border:1px solid var(--line);border-radius:var(--r-sm);padding:0 11px;transition:border-color .15s var(--ease)}
+textarea{height:auto;min-height:80px;padding:9px 11px;resize:vertical;line-height:1.55}
+input:hover,select:hover,textarea:hover{border-color:var(--line2)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--muted)}
+::placeholder{color:var(--faint)}
+input[type=range]{width:100%;accent-color:var(--text)}input[type=checkbox]{accent-color:var(--text);width:15px;height:15px}
+input[type=color]{width:40px;height:28px;border:1px solid var(--line);border-radius:4px;background:none;padding:2px}
+.hint{color:var(--faint);font-size:12.5px;margin-top:var(--s2);line-height:1.5;max-width:68ch}.hint.err{color:var(--bad)}
+.row{display:flex;gap:var(--s2);align-items:center;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--s4)}
+fieldset{border:0;border-top:1px solid var(--line);padding:var(--s4) 0 var(--s2);margin:0 0 var(--s5);min-width:0}
+legend{padding:0 var(--s3) 0 0;font:600 11px/1 var(--legend);font-stretch:72%;letter-spacing:.11em;text-transform:uppercase;color:var(--faint)}
+table{width:100%;border-collapse:separate;border-spacing:0 var(--s1)}
+th{text-align:left;padding:0 var(--s1) var(--s1)}td{padding:0 var(--s1)}
+code{font:12px var(--mono);background:var(--sunk);border:1px solid var(--line);border-radius:4px;padding:3px 7px;word-break:break-all;color:var(--muted)}
+.err{color:var(--bad)}
+.mono{font-family:var(--mono)}
+
+/* ---------- SETUP: signal-flow strip */
+.flow{position:sticky;top:98px;z-index:8;display:flex;align-items:stretch;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  margin:0 0 var(--s7);overflow:hidden;transition:border-color .2s var(--ease)}
+body.live .flow{border-color:var(--live)}
+.node{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;padding:var(--s3) var(--s4);background:none;border:0;text-align:left;cursor:pointer;transition:background .15s var(--ease)}
+.node+.node{border-left:1px solid var(--line)}
+.node[data-go="b-audio"]{flex:1.35}.node:nth-child(3){flex:1.25}
+.node:hover{background:var(--raise)}
+.node .v{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
+.node .s{font:12px/1.2 var(--mono);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .mini{height:3px;background:var(--sunk);overflow:hidden}
+.flow .act{display:flex;align-items:center;gap:var(--s2);padding:0 var(--s4);border-left:1px solid var(--line)}
+#err:empty,#startMsg:empty,#notice:empty,#authNote:empty{display:none}
+#authNote a{color:inherit}
+.msgbar.note{border-color:oklch(0.800 0.110 80 / .45);color:var(--warn)}
+.msgbar{margin:calc(-1 * var(--s6)) 0 var(--s5);padding:var(--s3) var(--s4);border:1px solid oklch(0.680 0.150 25 / .45);border-radius:var(--r);color:var(--bad);font-size:13px}
+
+.setup{display:grid;grid-template-columns:180px minmax(0,1fr);gap:var(--s7)}
+.toc{position:sticky;top:200px;align-self:start;display:flex;flex-direction:column}
+.toc a{color:var(--faint);text-decoration:none;padding:6px 0;font-size:13.5px;transition:color .15s var(--ease)}
+.toc a:hover{color:var(--text)}
+.toc .saved{margin-top:var(--s5);padding-top:var(--s4);border-top:1px solid var(--line)}
+.toc .saved label{font:600 11px/1 var(--legend);font-stretch:72%;letter-spacing:.11em;text-transform:uppercase;color:var(--faint)}
+.block{padding-bottom:var(--s7);margin-bottom:var(--s7);border-bottom:1px solid var(--line)}
+.block:last-child{border-bottom:0}
+.block h2{font:600 22px/1.2 var(--sans);letter-spacing:-.02em;margin:0 0 var(--s2)}
+.block .lede{color:var(--muted);margin:0 0 var(--s5);max-width:64ch}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4)}
+
+/* radio rows (event type, quality): quiet choices; the selected one is lit, not coloured */
+.types{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-bottom:var(--s5)}
+#quality.types{grid-template-columns:repeat(2,1fr)}#quality .choice{display:flex;flex-direction:column;justify-content:flex-start}
+#quality .fit.good{color:var(--muted)}#quality .fit.slow,#quality .fit.tight{color:#d9a400}#quality .fit.no{color:#e5484d}#quality .rec{font-size:11px;color:var(--faint);font-weight:400}
+.choice{position:relative;background:none;border:0;border-bottom:1px solid var(--line);padding:var(--s3) var(--s4) var(--s3) 42px;text-align:left;cursor:pointer;transition:background .15s var(--ease)}
+.types .choice:nth-child(odd){border-right:1px solid var(--line)}
+#quality .choice{border-bottom:1px solid var(--line);border-right:1px solid var(--line)}#quality .choice:nth-child(2n){border-right:0}#quality .choice:nth-last-child(-n+2){border-bottom:0}
+.types:not(#quality) .choice:nth-last-child(-n+2){border-bottom:0}
+.choice::before{content:"";position:absolute;left:var(--s4);top:16px;width:12px;height:12px;border-radius:50%;border:1px solid var(--line2);transition:all .15s var(--ease)}
+.choice:hover{background:var(--raise)}
+.choice b{display:block;font-weight:500;color:var(--muted)}
+.choice span{display:block;color:var(--faint);font-size:12.5px;line-height:1.45;margin-top:2px}
+.choice[aria-pressed=true]{background:var(--sel)}
+.choice[aria-pressed=true] b{color:var(--text)}
+.choice[aria-pressed=true]::before{border-color:var(--text);box-shadow:inset 0 0 0 3px var(--surface);background:var(--text)}
+.choice:disabled{opacity:.4;cursor:not-allowed}
+.choice .meta{font:12px var(--mono);color:var(--faint);margin-top:var(--s2)}
+
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r-sm);padding:2px;gap:2px;margin-bottom:var(--s3)}
+.seg button{background:none;border:0;border-radius:4px;height:30px;padding:0 var(--s3);color:var(--faint);cursor:pointer;font-weight:500;font-size:13px}
+.seg button:hover{color:var(--muted)}
+.seg button[aria-pressed=true]{background:var(--raise);color:var(--text)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips label{display:inline-flex;align-items:center;margin:0;cursor:pointer}
+.chips input{position:absolute;opacity:0;pointer-events:none}
+.chips label span{height:30px;display:inline-flex;align-items:center;padding:0 12px;border-radius:4px;border:1px solid var(--line);color:var(--faint);font-size:13px;transition:all .15s var(--ease)}
+.chips label:hover span{color:var(--muted);border-color:var(--line2)}
+.chips input:checked+span{border-color:var(--muted);background:var(--sel);color:var(--text)}
+.chips input:focus-visible+span{outline:1px solid var(--text);outline-offset:2px}
+.chips label.src span{border-style:dashed;color:var(--faint);cursor:default;background:none}
+
+.input-check{display:grid;grid-template-columns:180px 1fr 64px;align-items:center;gap:var(--s4);border:1px solid var(--line);border-radius:var(--r);padding:var(--s3) var(--s4);margin-top:var(--s1)}
+.input-check .bar{height:6px;background:var(--sunk);overflow:hidden;--mw:100%}
+.input-check .db{font:13px var(--mono);color:var(--muted);text-align:right}
+.input-check .state{font-size:13px;color:var(--muted)}
+.input-check{border-radius:var(--r) var(--r) 0 0}
+.fader{display:grid;grid-template-columns:180px 1fr 64px;align-items:center;gap:var(--s4);padding:var(--s3) var(--s4);border:1px solid var(--line);border-top:0;border-radius:0 0 var(--r) var(--r)}
+.fader label{margin:0;font-size:13px}
+.fader output{font:13px var(--mono);color:var(--text);text-align:right}
+
+details.tune{border-top:1px solid var(--line)}
+details.tune:last-of-type{border-bottom:1px solid var(--line)}
+details.tune>summary{list-style:none;cursor:pointer;padding:var(--s4) 0;display:flex;align-items:baseline;gap:var(--s4)}
+details.tune>summary::-webkit-details-marker{display:none}
+details.tune>summary b{font-weight:500;min-width:140px}
+details.tune>summary span{color:var(--faint);font-size:13px}
+details.tune>summary::after{content:"";margin-left:auto;width:7px;height:7px;border-right:1px solid var(--muted);border-bottom:1px solid var(--muted);transform:rotate(45deg) translateY(-2px);transition:transform .2s var(--ease)}
+details.tune[open]>summary::after{transform:rotate(-135deg)}
+details.tune>summary:hover b{color:var(--text)}
+details.tune>div{padding:0 0 var(--s4)}
+.check{display:flex;align-items:center;gap:var(--s3);color:var(--text);cursor:pointer}
+
+/* ---------- LIVE */
+#lines .ln,.head,.part{display:grid;grid-template-columns:repeat(var(--cols),1fr) 84px;gap:var(--s5);padding:var(--s3) var(--s2)}
+#lines .ln{border-bottom:1px solid var(--line)}
+.head{border-bottom:1px solid var(--line);padding-bottom:var(--s3)}
+#lines .src{color:var(--text);font-weight:500}#lines .t{color:var(--muted)}#lines small{color:var(--faint);font-family:var(--mono)}
+.tag{font:600 10px/1 var(--legend);font-stretch:72%;letter-spacing:.1em;color:var(--faint);border:1px solid var(--line2);border-radius:3px;padding:2px 4px;text-transform:uppercase;margin-left:6px;vertical-align:1px}
+.empty{color:var(--faint);max-width:56ch;margin:var(--s7) auto;text-align:center}
+#lines:not(:empty)~.empty{display:none}
+.part{color:var(--faint);background:var(--surface);border-radius:var(--r)}.part:empty{display:none}.part .src{color:var(--muted)}
+
+/* ---------- CAPTIONS */
+.cap{display:grid;grid-template-columns:minmax(320px,400px) 1fr;gap:var(--s6)}
+.cap .ed{max-height:calc(100vh - 150px);overflow:auto;padding-right:var(--s2)}
+#pvw{position:relative;width:100%;aspect-ratio:16/9;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--sunk)}
+#pvw iframe{position:absolute;left:0;top:0;width:1920px;height:1080px;border:0;transform-origin:0 0}
+.ctl{display:flex;gap:var(--s3);align-items:center}.ctl input[type=range]{flex:1}.ctl output{width:48px;text-align:right;font:12px var(--mono);color:var(--muted)}
+#ndiT input[type=text],#ndiT select{height:30px}
+
+@media(max-width:980px){.setup{grid-template-columns:1fr}.toc{display:none}.flow{flex-wrap:wrap}.node{flex:1 1 33%;border-bottom:1px solid var(--line)}
+  .flow .act{flex:1 1 100%;justify-content:flex-end;border-left:0;padding:var(--s3) var(--s4)}#quality.types{grid-template-columns:1fr}#quality .choice{border-right:0;border-bottom:1px solid var(--line)}#quality .choice:last-child{border-bottom:0}}
+@media(max-width:800px){header{padding:0 var(--s4)}.hmeter,.counts{display:none}nav{padding:0 var(--s4);gap:var(--s4)}section{padding:var(--s5) var(--s4)}
+  .flow{position:relative;top:0}.two{grid-template-columns:1fr}.cap{grid-template-columns:1fr}.cap .ed{max-height:none}.input-check{grid-template-columns:1fr 56px}.input-check .state{grid-column:1/-1}.fader{grid-template-columns:1fr 64px}.fader label{grid-column:1/-1}}
+@media(max-width:560px){.types{grid-template-columns:1fr}.types .choice{border-right:0!important;border-bottom:1px solid var(--line)!important}}
+input.sug{color:var(--muted);font-style:italic}  /* glossary suggestion, not checked yet */
+</style></head><body>
+<header>
+  <div class="brand"><i></i>LiveTranslate</div><span id="pill" class="pill">Stopped</span><span id="sname"></span>
+  <div class="hmeter"><span id="inp"></span><div id="meter"><div id="lvl"></div></div><span id="db">—</span></div>
+  <button id="pause" class="btn sm">Pause</button>
+  <span class="counts" id="counts"></span>
+  <button class="btn sm ghost" id="quitApp" title="Stop everything and close LiveTranslate on this machine">Quit</button>
+</header>
+<nav><button data-t="session" class="on">Setup</button><button data-t="live">Live</button><button data-t="captions">Captions &amp; outputs</button><button data-t="audience">Access</button></nav>
+
+<!-- ======================= SETUP -->
+<section id="session" class="on">
+  <div class="flow" id="flow">
+    <button class="node" data-go="b-audio"><span class="k">Input</span><span class="v" id="fl_in">—</span><div class="mini"><div class="lvl" id="fl_lvl" style="--mw:200px"></div></div></button>
+    <button class="node" data-go="b-lang"><span class="k">Speech</span><span class="v" id="fl_sp">—</span><span class="s" id="fl_sp2"></span></button>
+    <button class="node" data-go="b-lang"><span class="k">Audience</span><span class="v" id="fl_aud">—</span><span class="s" id="fl_aud2"></span></button>
+    <button class="node" data-go="b-quality"><span class="k">Quality</span><span class="v" id="fl_q">—</span><span class="s" id="fl_q2"></span></button>
+    <button class="node" data-t2="captions"><span class="k">Outputs</span><span class="v" id="fl_out">—</span><span class="s" id="fl_out2"></span></button>
+    <div class="act">
+      <button class="btn" id="applyBtn" title="Update context, names, glossary, quality and audio input without stopping">Apply changes</button>
+      <button class="btn red" id="stopBtn">Stop</button>
+      <button class="btn pri" id="startBtn">Start session</button>
+    </div>
+  </div>
+  <div class="msgbar" id="err"></div><div class="msgbar" id="startMsg"></div><div class="msgbar note" id="notice"></div><div class="msgbar note" id="authNote"></div>
+
+  <div class="setup">
+    <aside class="toc">
+      <a href="#b-event">Event</a><a href="#b-lang">Languages</a><a href="#b-audio">Audio input</a><a href="#b-quality">Translation quality</a><a href="#b-tune">Fine-tuning</a>
+      <div class="saved"><label for="saved">Saved setups</label><select id="saved"><option value="">Open a saved setup…</option></select></div>
+    </aside>
+    <div>
+      <div class="block" id="b-event">
+        <h2>Event</h2>
+        <p class="lede">The event type sets timing that suits how people speak there. Everything stays adjustable in Fine-tuning.</p>
+        <div class="types" id="types"></div>
+        <div class="f"><label for="s_name">Session name</label><input type="text" id="s_name" placeholder="e.g. Energy Summit — Day 1 keynote"></div>
+        <div class="f"><label for="s_context">Describe the event</label><textarea id="s_context"></textarea><div class="hint" id="ctxHint"></div></div>
+        <div class="f"><label for="s_names">Names and special words</label><textarea id="s_names" style="min-height:60px" placeholder="Speakers, venues, brands, product names — e.g. Siobhán Ní Dhuibhir, Nyxtera, Rivage PM10"></textarea>
+          <div class="hint">Recognised with the right spelling and never translated, whichever quality you choose.</div></div>
+      </div>
+
+      <div class="block" id="b-lang">
+        <h2>Languages</h2>
+        <p class="lede">What the speakers use, and what the audience can read.</p>
+        <label>Speakers use</label>
+        <div class="seg" id="spokenSeg"><button data-m="one">One language</button><button data-m="auto">Several languages — detect each sentence</button></div>
+        <div class="f" id="oneLang" style="max-width:320px"><select id="s_lang1" aria-label="Spoken language"></select></div>
+        <input type="hidden" id="s_source">
+        <div class="f"><label id="tlab">Audience languages</label><div class="chips" id="s_targets"></div><div class="hint" id="thint"></div><div class="hint err" id="langWarn"></div></div>
+      </div>
+
+      <div class="block" id="b-audio">
+        <h2>Audio input</h2>
+        <p class="lede">Use a clean speech feed: a post-fader aux or matrix from the desk, not the room mix. Choosing an input lets you check the level before you start.</p>
+        <div class="two">
+          <div class="f"><label for="s_device">Interface</label><div class="row" style="flex-wrap:nowrap"><select id="s_device"></select><button class="btn sm ghost" id="refreshDev" title="Scan for interfaces again">Rescan</button></div></div>
+          <div class="f"><label for="s_channel">Channel</label><select id="s_channel"></select></div>
+        </div>
+        <div class="input-check"><span class="state" id="ic_state">Choose an input to check its level</span><div class="bar"><div class="lvl" id="ic_lvl"></div></div><span class="db" id="ic_db">—</span></div>
+        <div class="fader"><label for="s_gain_db">Input gain</label><input type="range" id="s_gain_db" min="-20" max="30" step="0.5" value="0" title="Double-click to reset to 0 dB"><output id="gainOut">0.0 dB</output></div>
+        <div class="hint">Aim for peaks around −20 to −10 dB while someone speaks. Gain applies instantly, also during a live session; double-click the slider to reset. Change the input itself while live with Apply changes.</div>
+      </div>
+
+      <div class="block" id="b-quality">
+        <h2>Translation quality</h2>
+        <p class="lede">Viewers always see a fast first version within about half a second. Higher quality replaces it with a version that understands the event description.</p>
+        <div class="types" id="quality"></div>
+        <div class="hint" id="qHint"></div>
+      </div>
+
+      <div class="block" id="b-tune">
+        <h2>Fine-tuning</h2>
+        <p class="lede">Optional. Defaults come from the event type.</p>
+        <details class="tune"><summary><b>Timing</b><span>When a sentence ends, how long it can run, how often words appear</span></summary><div>
+          <div class="two">
+            <div class="f"><label for="s_silence_ms">Pause that ends a sentence (ms)</label><input type="number" id="s_silence_ms" step="50"><div class="hint">Shorter: faster captions, more fragments. 400–800.</div></div>
+            <div class="f"><label for="s_max_s">Longest sentence before a cut (s)</label><input type="number" id="s_max_s" step="0.5"></div>
+            <div class="f"><label for="s_partial_s">Show words while speaking, every (s)</label><input type="number" id="s_partial_s" step="0.1" min="0"><div class="hint">0 turns it off. 0.5–1.</div></div>
+            <div class="f"><label for="s_gate_db">Silence threshold (dBFS)</label><input type="number" id="s_gate_db" step="1" max="-20" min="-90"><div class="hint">Raise to around −45 in a loud room.</div></div>
+          </div></div></details>
+        <details class="tune"><summary><b>Glossary</b><span>Fixed translations for terms with one meaning at this event</span></summary><div>
+          <table id="gloss"></table><button class="btn sm" id="addG">Add term</button><div class="hint">Type a term in any language and press Tab: the other languages are suggested (dimmed). Check them — a glossary term is used on every line.</div>
+          <div class="hint">Example at a mass: host → l'hostie / la hostia. Write the article for gendered languages so the grammar stays right. Always applied by the higher qualities; best effort with Fastest.</div></div></details>
+        <details class="tune"><summary><b>Models</b><span>Exact translation and speech recognition models</span></summary><div>
+          <div class="two">
+            <div class="f"><label for="s_engine">Translation model</label><select id="s_engine"></select></div>
+            <div class="f"><label for="s_whisper">Speech recognition model</label><select id="s_whisper"></select><div class="hint">turbo is the best balance on Apple Silicon.</div></div>
+          </div></div></details>
+        <details class="tune"><summary><b>Profanity</b><span>Mask swear words on every output</span></summary><div>
+          <div class="f"><label class="check"><input type="checkbox" id="s_bleep"> Mask profanity</label></div>
+          <div class="f"><label for="s_bleep_extra">Extra words to mask</label><input type="text" id="s_bleep_extra" placeholder="comma-separated; word* also masks its endings"></div></div></details>
+        <details class="tune"><summary><b>vMix title push</b><span>Write captions into a GT title instead of the browser overlay</span></summary><div>
+          <div class="two">
+            <div class="f"><label for="v_host">vMix address</label><input type="text" id="v_host" placeholder="192.168.1.20:8088"></div>
+            <div class="f"><label for="v_input">Title input (name or number)</label><input type="text" id="v_input" placeholder="Captions"></div>
+            <div class="f"><label for="v_clear">Clear the title after silence (s)</label><input type="number" id="v_clear" min="0" step="1" placeholder="6"><div class="hint">0 keeps the last line on air.</div></div>
+          </div><div id="v_fields" class="two"></div></div></details>
+        <details class="tune"><summary><b>Audience Wi-Fi</b><span>Printed on the QR card for phones</span></summary><div>
+          <div class="two">
+            <div class="f"><label for="s_wifi_ssid">Network name</label><input type="text" id="s_wifi_ssid"></div>
+            <div class="f"><label for="s_wifi_pass">Password</label><input type="text" id="s_wifi_pass"></div>
+          </div></div></details>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= LIVE -->
+<section id="live">
+  <div class="row" style="margin-bottom:16px">
+    <form id="say" class="row" style="flex:1;min-width:280px;flex-wrap:nowrap"><input type="text" id="sayTxt" placeholder="Type a line to send to every screen (in the language being spoken)"><button class="btn pri">Send</button></form>
+    <button class="btn" id="clearBtn">Clear screens</button>
+    <a class="btn" href="/api/transcript">Transcript</a>
+    <span id="srts" class="row"></span>
+  </div>
+  <div id="lhead" class="head"></div>
+  <div id="lines"></div>
+  <p class="empty" id="liveEmpty">Captions appear here once the session is live — the original in the speaker's language, translations beside it. Start the session from Setup.</p>
+  <div id="partial" class="part"></div>
+</section>
+
+<!-- ======================= CAPTIONS -->
+<section id="captions">
+  <div class="cap">
+    <div class="ed">
+      <fieldset><legend>Caption look</legend>
+        <div class="row" style="flex-wrap:nowrap"><select id="preset"></select><button class="btn sm" id="newP">New</button><button class="btn sm" id="dupP">Duplicate</button><button class="btn sm ghost" id="delP">Delete</button></div>
+        <div class="hint">Edits apply instantly to every screen using this look. Use one look per output, e.g. “fr-lower-third”.</div>
+      </fieldset>
+      <div id="styleForm"></div>
+    </div>
+    <div>
+      <div id="pvw"><iframe id="pvf" title="Caption preview"></iframe></div>
+      <fieldset style="margin-top:16px"><legend>NDI outputs</legend>
+        <table id="ndiT"></table>
+        <div class="row" style="margin:8px 0 6px"><button class="btn sm" id="ndiAdd">Add NDI output</button><button class="btn sm pri" id="ndiSave">Save and apply</button><span id="ndiMsg" class="hint" style="margin:0"></span></div>
+        <div class="hint" id="ndiHint">1920×1080 with transparency, same look as the browser overlay. <b>OBS:</b> Sources → NDI Source → choose the name. <b>vMix:</b> Add Input → NDI → choose the name, on an overlay channel.</div>
+      </fieldset>
+      <fieldset><legend>Browser overlay</legend>
+        <div class="f"><label>Address for a browser input</label><div class="row" style="flex-wrap:nowrap"><code id="ovUrl" style="flex:1"></code><button class="btn sm" id="copyUrl">Copy</button></div></div>
+        <div class="hint"><b>vMix:</b> Add Input → Web Browser, 1920×1080, on an overlay channel. <b>OBS:</b> Sources → Browser, 1920×1080.
+        Force any setting in the address, e.g. <code>&amp;lang=es&amp;size=60</code>. For recorded video, download subtitle files from Live.</div>
+      </fieldset>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= AUDIENCE -->
+<section id="audience">
+  <div class="grid">
+    <fieldset><legend>Audience</legend>
+      <img src="/qr/guest.svg" alt="QR code for the audience page" style="width:220px;background:#fff;border-radius:4px;padding:6px;display:block;margin-bottom:12px">
+      <code id="gUrl"></code>
+      <div class="hint" style="margin-top:10px">People pick a language, read along, and can listen with earphones.</div>
+      <p><a class="btn" href="/card" target="_blank">Print QR card</a></p>
+      <div class="f" style="margin-top:16px"><label for="s_phone_pace">How phones show the translation</label>
+        <select id="s_phone_pace"><option value="smooth">Smooth — each sentence writes itself at a calm pace</option>
+          <option value="relaxed">Relaxed — slower, waits for the best translation</option>
+          <option value="live">Live — words appear while the speaker talks</option></select>
+        <div class="hint">The default for everyone, applied immediately. Each person can still change it on their phone (Aa).</div></div>
+      <div class="f" style="margin-top:16px"><label for="s_voice_gender">Listening voice</label>
+        <select id="s_voice_gender"><option value="female">Natural voice · female</option><option value="male">Natural voice · male (French stays female)</option></select>
+        <div class="hint" id="voiceHint">What phones hear when they tap Listen.</div></div>
+    </fieldset>
+    <fieldset><legend>Admins</legend>
+      <div class="f"><label>Control from another device</label><code id="cUrl"></code>
+        <div class="hint" id="accessHint"></div></div>
+      <form id="pwForm" autocomplete="off">
+        <div class="f" id="curWrap"><label for="pwCur">Current password</label><input type="password" id="pwCur" autocomplete="current-password"></div>
+        <div class="f"><label for="pwNew" id="pwNewL">New admin password</label><input type="password" id="pwNew" autocomplete="new-password" minlength="8"></div>
+        <div class="f"><label for="pwNew2">Repeat it</label><input type="password" id="pwNew2" autocomplete="new-password"></div>
+        <div class="row"><button class="btn pri" id="pwSave">Save password</button><span class="hint" id="pwMsg" style="margin:0"></span></div>
+      </form>
+      <div class="row" style="margin-top:20px">
+        <button class="btn sm" id="signoutAll" title="Every other browser has to sign in again">Sign out all other devices</button>
+        <a class="btn sm ghost" href="/logout" id="logoutBtn">Sign out of this browser</a>
+      </div>
+    </fieldset>
+    <fieldset><legend>Network</legend>
+      <div class="f"><label for="netPort">Port</label>
+        <div class="row"><input type="number" id="netPort" min="1024" max="65535" style="width:110px"><button class="btn" id="netSave">Change port</button><span class="hint" id="netMsg" style="margin:0"></span></div>
+        <div class="hint">Every LiveTranslate address uses it (Control, phones, vMix/OBS overlays). Default 8180 — 8000 is Bitfocus Companion's. Changing it restarts LiveTranslate in a few seconds; a live session carries on, but vMix/OBS inputs and printed QR cards need the new address.</div></div>
+    </fieldset>
+  </div>
+</section>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+let INFO, ST={}, presets={}, curP='default', ws, ollama=[], devices=[];
+const esc=s=>(s??'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api=(w,b)=>fetch('/api/'+w,b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})
+  .then(r=>{ if(r.status===401){ location.href='/login'; throw new Error('signed out'); }  // session ended elsewhere
+    if(!r.ok) throw new Error(`/api/${w}: HTTP ${r.status}`); return r.json(); });
+
+/* ---------- network port */
+$('#netPort').value=location.port||80;
+$('#netSave').onclick=async()=>{ const port=+$('#netPort').value, msg=$('#netMsg');
+  if(port===+(location.port||80)){ msg.textContent='Already on this port.'; return; }
+  msg.textContent='Checking…';
+  const r=await fetch('/api/port',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||d.error){ msg.textContent=d.error||`Could not change it (HTTP ${r.status}).`; return; }
+  if(!d.restart){ msg.textContent=d.note||'Saved.'; return; }
+  const url=`${location.protocol}//${location.hostname}:${port}`; msg.textContent=`Moving to port ${port}…`;
+  for(let i=0;i<60;i++){ await new Promise(z=>setTimeout(z,1000));  // other origin: no-cors only tells "it answers"
+    try{ await fetch(url+'/api/info',{mode:'no-cors',cache:'no-store'}); location.href=url+'/control'; return; }catch(e){} }
+  msg.textContent=`Not answering on ${port} yet — open ${url}/control`; };
+
+/* ---------- tabs */
+$$('nav button').forEach(b=>b.onclick=()=>{ $$('nav button').forEach(x=>x.classList.toggle('on',x===b)); $$('section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t)); if(b.dataset.t==='captions') scalePv(); });
+
+/* ---------- session form */
+function langOpts(sel,incEmpty){ return (incEmpty?'<option value="">— none —</option>':'')+Object.entries(INFO.langs).map(([k,v])=>`<option value="${k}" ${k===sel?'selected':''}>${v[0]} (${k})</option>`).join(''); }
+function fillForm(s){
+  $('#s_name').value=s.name; $('#s_context').value=s.context; $('#s_names').value=s.names;
+  $('#s_lang1').innerHTML=langOpts(s.source==='auto'?(s.targets[0]||'en'):s.source);
+  $('#s_source').value=s.source; prevSrc=s.source;
+  $('#s_targets').innerHTML=Object.entries(INFO.langs).map(([k,v])=>`<label data-l="${k}"><input type="checkbox" value="${k}" ${s.targets.includes(k)?'checked':''}><span>${v[0]}</span></label>`).join('');
+  eventType=s.event_type||'conference'; drawTypes();
+  $('#s_engine').innerHTML=`<option value="argos">Argos (offline, fast, basic)</option>`+ollama.map(m=>`<option value="ollama:${m}">Local AI · ${m}</option>`).join('');
+  if(s.engine.startsWith('ollama:') && !ollama.includes(s.engine.slice(7))) $('#s_engine').innerHTML+=`<option value="${s.engine}">${s.engine} (not found)</option>`;
+  $('#s_engine').value=s.engine; setTimeout(ctxHint); drawQuality();
+  $('#s_whisper').innerHTML=INFO.whisper.map(w=>`<option ${w===s.whisper?'selected':''}>${w}</option>`).join('');
+  const dv=String(s.device??''), known=!dv||devices.some(d=>d.name===dv);
+  $('#s_device').innerHTML=`<option value="">System default input</option>`+devices.map(d=>`<option value="${esc(d.name)}">${esc(d.name)} (${d.ch} ch)</option>`).join('')+
+    (known?'':`<option value="${esc(dv)}">${esc(dv)} (not connected)</option>`);
+  $('#s_device').value=dv; drawChannels(s.channel);
+  ['silence_ms','max_s','partial_s','gate_db','wifi_ssid','wifi_pass'].forEach(k=>$('#s_'+k).value=s[k]??'');
+  $('#s_gain_db').value=s.gain_db??0; gainLabel(); $('#s_phone_pace').value=s.phone_pace||'smooth'; $('#s_voice_gender').value=s.voice_gender||'female';
+  $('#s_bleep').checked=s.bleep!==false; $('#s_bleep_extra').value=s.bleep_extra||'';
+  $('#v_host').value=s.vmix?.host||''; $('#v_input').value=s.vmix?.input||''; $('#v_clear').value=s.vmix?.clear??6;
+  glossary=JSON.parse(JSON.stringify(s.glossary||[])); srcMode(); drawGloss(); drawVFields(s.vmix?.fields||{}); updateFlow();
+}
+let glossary=[];
+function drawChannels(sel){ const d=devices.find(x=>x.name===$('#s_device').value), n=Math.max(1,d?d.ch:2);
+  $('#s_channel').innerHTML=Array.from({length:n},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join(''); $('#s_channel').value=Math.min(+sel||1,n); }
+$('#s_device').onchange=()=>{ drawChannels($('#s_channel').value); checkInput(); };
+$('#s_channel').onchange=checkInput;
+// input check: open the chosen input so the meter moves before going live (server ignores the audio)
+function checkInput(){ updateFlow(); if(ST.running||ST.loading) return;
+  $('#ic_state').textContent='Listening…'; opt(api('monitor',{device:$('#s_device').value,channel:+$('#s_channel').value||1,gate_db:+$('#s_gate_db').value||-60,gain_db:+$('#s_gain_db').value||0})); }
+// input gain: a fader — applies immediately (live session or input check), no Apply needed
+const fmtGain=v=>`${v>0?'+':''}${(+v).toFixed(1)} dB`;
+function gainLabel(){ $('#gainOut').textContent=fmtGain($('#s_gain_db').value); }
+let gainT;
+$('#s_gain_db').oninput=()=>{ gainLabel(); updateFlow(); clearTimeout(gainT);
+  gainT=setTimeout(()=>{ if(ST.running||ST.monitoring) opt(api('gain',{gain_db:+$('#s_gain_db').value})); },60); };
+$('#s_phone_pace').onchange=()=>opt(api('phone_pace',{pace:$('#s_phone_pace').value}));
+$('#s_voice_gender').onchange=()=>opt(api('voice',{gender:$('#s_voice_gender').value}));
+$('#s_gain_db').ondblclick=()=>{ $('#s_gain_db').value=0; $('#s_gain_db').oninput(); };
+function targets(){ return $$('#s_targets input:checked').map(i=>i.value); }
+const uniq=a=>[...new Set(a)];
+// every language of a session, in display order ('auto': the ticked ones are spoken AND shown)
+const SL=s=>s.source==='auto'?uniq(s.targets):uniq([s.source,...s.targets]);
+const formLangs=()=>SL({source:$('#s_source').value,targets:targets()});
+function ctxHint(){ const llm=$('#s_engine').value.startsWith('ollama:'), has=$('#s_context').value.trim();
+  const h=$('#ctxHint'); h.className='hint'+(!llm&&has?' err':'');
+  h.textContent=llm?'Used to pick the right meaning of ambiguous words and the right jargon, and to help speech recognition.'
+    :has?'Fastest quality does not read this description. Choose Balanced or Most accurate, or add key terms to the Glossary.'
+    :'What it is, who speaks, the topic and the tone. One or two sentences is enough.'; }
+$('#s_engine').onchange=()=>{ ctxHint(); drawQuality(); updateFlow(); }; $('#s_context').oninput=ctxHint;
+function srcMode(){ const src=$('#s_source').value, auto=src==='auto';
+  $$('#spokenSeg button').forEach(b=>b.setAttribute('aria-pressed',String((b.dataset.m==='auto')===auto)));
+  $('#oneLang').style.display=auto?'none':'';
+  $('#tlab').textContent=auto?'Languages spoken and shown':'Audience languages';
+  $('#thint').textContent=auto?'Each sentence is detected as one of these and translated into all the others. Choose at least two.'
+    :`${INFO.langs[src]?.[0]||''} is always available as the original.`;
+  $$('#s_targets label').forEach(l=>l.classList.toggle('src',!auto&&l.dataset.l===src));
+  $$('#s_targets input').forEach(i=>{ i.disabled=!auto&&i.value===src; });
+  updateFlow(); }
+function drawGloss(){
+  syncGloss(false); const src=$('#s_source').value, auto=src==='auto';
+  if(!glossary.length){ $('#gloss').innerHTML=''; return; }
+  // fixed source: 'src' column + targets · auto: one column per session language (any can be the source)
+  const cols=auto?formLangs():['src',...targets().filter(l=>l!==src)];
+  const head=l=>l==='src'?`${INFO.langs[src]?.[0]||'Source'} term`:INFO.langs[l][0];
+  $('#gloss').innerHTML=`<tr>${cols.map(l=>`<th>${head(l)}</th>`).join('')}<th></th></tr>`+
+    glossary.map((g,i)=>`<tr data-i="${i}">${cols.map(l=>`<td><input type="text" data-k="${l}" value="${esc(g[l]??(auto&&l===g.from?g.src:''))}"></td>`).join('')}<td><button class="btn sm ghost" data-del="${i}" aria-label="Remove term">Remove</button></td></tr>`).join('');
+  $$('#gloss [data-del]').forEach(b=>b.onclick=()=>{ syncGloss(); glossary.splice(+b.dataset.del,1); drawGloss(); });
+  $$('#gloss input').forEach(i=>{ i.onchange=()=>suggestRow(i); i.oninput=()=>{ i.classList.remove('sug'); i.title=''; }; });
+}
+/* type a term in any column: the row's empty languages are filled with a suggestion (local AI + the event
+   description when installed, else offline). Shown dimmed until edited: a wrong term here would be enforced on
+   every line, so it must be checked. */
+async function suggestRow(inp){
+  const term=inp.value.trim(); if(!term) return;
+  const src=$('#s_source').value, lang=k=>k==='src'?src:k;
+  const empty=[...inp.closest('tr').querySelectorAll('input')].filter(x=>x!==inp&&!x.value.trim());
+  if(!empty.length) return;
+  empty.forEach(x=>{ x.placeholder='suggesting…'; });
+  try{
+    const r=await api('gloss_suggest',{term,from:lang(inp.dataset.k),to:empty.map(x=>lang(x.dataset.k)),
+      engine:$('#s_engine').value,context:$('#s_context').value});
+    empty.forEach(x=>{ const v=r[lang(x.dataset.k)]; if(v&&!x.value.trim()){ x.value=v; x.classList.add('sug'); x.title='Suggested — check it, then edit if needed'; } });
+    syncGloss();
+  }catch(e){}
+  empty.forEach(x=>{ x.placeholder=''; });
+}
+function syncGloss(read=true){ if(!read) return; $$('#gloss tr[data-i]').forEach(tr=>{ const g=glossary[+tr.dataset.i]; tr.querySelectorAll('input').forEach(i=>g[i.dataset.k]=i.value); }); }
+function drawVFields(f){ const ls=formLangs();
+  $('#v_fields').innerHTML=ls.map(l=>`<div class="f"><label>Title field for ${INFO.langs[l][0]}</label><input type="text" data-vl="${l}" value="${esc(f[l]||'')}" placeholder="e.g. Headline.Text — leave empty to skip"></div>`).join(''); }
+function readForm(){
+  syncGloss(); const vf={}; $$('[data-vl]').forEach(i=>{ if(i.value.trim()) vf[i.dataset.vl]=i.value.trim(); });
+  return {name:$('#s_name').value.trim()||'Session',event_type:eventType,context:$('#s_context').value,names:$('#s_names').value,glossary:glossary.filter(g=>Object.values(g).some(v=>v)),
+    source:$('#s_source').value,targets:targets(),engine:$('#s_engine').value,whisper:$('#s_whisper').value,device:$('#s_device').value,
+    channel:+$('#s_channel').value||1,silence_ms:+$('#s_silence_ms').value||600,max_s:+$('#s_max_s').value||7,phone_pace:$('#s_phone_pace').value,voice_gender:$('#s_voice_gender').value,partial_s:$('#s_partial_s').value===''?0.6:+$('#s_partial_s').value,gate_db:+$('#s_gate_db').value||-60,gain_db:+$('#s_gain_db').value||0,
+    vmix:{host:$('#v_host').value.trim(),input:$('#v_input').value.trim(),fields:vf,clear:$('#v_clear').value===''?6:Math.max(0,+$('#v_clear').value)},bleep:$('#s_bleep').checked,bleep_extra:$('#s_bleep_extra').value,wifi_ssid:$('#s_wifi_ssid').value,wifi_pass:$('#s_wifi_pass').value};
+}
+let prevSrc=null;
+function setSource(v){ syncGloss(); $('#s_source').value=v; sourceChanged(); }
+$$('#spokenSeg button').forEach(b=>b.onclick=()=>setSource(b.dataset.m==='auto'?'auto':$('#s_lang1').value));
+$('#s_lang1').onchange=()=>setSource($('#s_lang1').value);
+$('#s_targets').onchange=sourceChanged;
+function sourceChanged(){
+  const src=$('#s_source').value;  // glossary 'src' column <-> that language's own column when toggling Auto
+  if(src==='auto'&&prevSrc&&prevSrc!=='auto'){ const c=$(`#s_targets input[value="${prevSrc}"]`); if(c) c.checked=true; }  // the old speaker language stays in the set
+  if(prevSrc&&prevSrc!==src){ glossary.forEach(g=>{ if(src==='auto'&&prevSrc!=='auto'&&g.src&&!g[prevSrc]) g[prevSrc]=g.src;
+    if(src!=='auto'&&g[src]&&!g.src) g.src=g[src]; }); prevSrc=src; }
+  srcMode(); const f={}; $$('[data-vl]').forEach(i=>f[i.dataset.vl]=i.value); drawGloss(); drawVFields(f); }
+$('#addG').onclick=()=>{ syncGloss(); glossary.push({src:''}); drawGloss(); };
+function say(msg){ $('#startMsg').textContent=msg||''; }
+$('#startBtn').onclick=()=>{ const s=readForm(); say('');
+  if(s.source==='auto'&&uniq(s.targets).length<2) return say('Choose at least two languages when speakers use several languages.');
+  if(!s.targets.filter(l=>l!==s.source).length) return say('Choose at least one audience language to translate into.');
+  if(s.engine==='argos'&&offlineGaps().length) return say(`Fastest can't translate into ${offlineGaps().map(l=>INFO.langs[l][0]).join(', ')} on this machine. Choose Balanced or Most accurate, or remove that language.`);
+  $('#startBtn').disabled=true; $('#startBtn').textContent='Starting…'; api('start',s); };
+$('#applyBtn').onclick=async()=>{ try{ await api('update',readForm()); say(''); $('#applyBtn').textContent='Applied'; }
+  catch(e){ say('Changes were not applied — the server did not answer. Check that LiveTranslate is running, then try again.'); $('#applyBtn').textContent='Not applied'; }
+  setTimeout(()=>$('#applyBtn').textContent='Apply changes',1500); };
+$('#stopBtn').onclick=()=>{ if(confirm('Stop the session? Screens and phones stop receiving captions.')) api('stop',{}); };
+$('#refreshDev').onclick=async()=>{ devices=await api('devices'); fillForm(readForm()); };
+async function loadSaved(){ const ss=await api('sessions'); $('#saved').innerHTML='<option value="">Open a saved setup…</option>'+ss.map((s,i)=>`<option value="${i}">${esc(s.name)}</option>`).join('');
+  $('#saved').onchange=e=>{ if(e.target.value!=='') fillForm({...INFO.default,...ss[+e.target.value]}); }; }
+
+/* ---------- event types: timing that suits how people speak there */
+const TYPES={
+  conference:{n:'Conference',d:'Talks and keynotes. Steady pace, prepared speech.',set:{silence_ms:600,max_s:7,partial_s:0.6,gate_db:-60},
+    ph:'Annual energy-sector conference. Keynotes and a panel on battery storage. Audience: engineers and investors. Formal tone.'},
+  worship:{n:'Worship service',d:'Sermons and liturgy. Long phrases, formal register.',set:{silence_ms:750,max_s:9,partial_s:0.8,gate_db:-60},
+    ph:'Catholic Sunday mass. Homily on the Gospel of Luke, prayers and announcements. Liturgical vocabulary, formal tone.'},
+  show:{n:'Show or concert',d:'MC between acts. Loud room, short lines.',set:{silence_ms:500,max_s:6,partial_s:0.6,gate_db:-45},
+    ph:'Rock concert. The singer talks to the crowd between songs. Casual tone, slang, band and song names.'},
+  sport:{n:'Sport',d:'Live commentary. Fast speech, shortest delay.',set:{silence_ms:400,max_s:5,partial_s:0.5,gate_db:-50},
+    ph:'Football match, live commentary from the stadium: Premier League, player names, fast and informal.'},
+  panel:{n:'Multilingual panel',d:'Several speakers, several languages.',set:{silence_ms:550,max_s:7,partial_s:0.6,gate_db:-60},auto:true,
+    ph:'Round table on renewable energy with French, Spanish and English speakers. Moderator plus four panelists.'},
+  custom:{n:'Custom',d:'Keep the current settings and tune them yourself.',set:{}},
+};
+let eventType='conference';
+function drawTypes(){
+  $('#types').innerHTML=Object.entries(TYPES).map(([k,t])=>`<button class="choice" data-k="${k}" aria-pressed="${k===eventType}"><b>${t.n}</b><span>${t.d}</span></button>`).join('');
+  $$('#types .choice').forEach(b=>b.onclick=()=>pickType(b.dataset.k));
+  $('#s_context').placeholder=TYPES[eventType].ph||'Describe the event: what it is, who is speaking, the topic and the tone.';
+}
+function pickType(k){ eventType=k; const t=TYPES[k];
+  Object.entries(t.set).forEach(([f,v])=>{ $('#s_'+f).value=v; });
+  if(t.auto&&$('#s_source').value!=='auto') setSource('auto');
+  drawTypes(); updateFlow(); }
+
+/* ---------- quality: Fastest + the AI tiers of models.py, each with what THIS machine can do with it */
+const FITTXT={good:'runs well here',slow:'runs here, slower',tight:'tight on memory here',no:'too big for this machine'};
+function tiers(){ return INFO?.fit?.tiers||[]; }
+function qualityModels(){ const q={fast:'argos'};
+  tiers().forEach(t=>{ q[t.key]=ollama.includes(t.model)?'ollama:'+t.model:null; }); return q; }
+const QUAL={fast:{n:'Fastest',d:'Final text about 1 s after the speaker. Does not use the event description.'}};
+function qualInfo(k){ if(QUAL[k]) return QUAL[k]; const t=tiers().find(t=>t.key===k); return t?{n:t.name,d:t.desc}:{n:k,d:''}; }
+function drawQuality(){ const q=qualityModels(), cur=$('#s_engine').value, rec=INFO?.fit?.recommend;
+  $('#quality').innerHTML=Object.keys(q).map(k=>{ const m=q[k], v=qualInfo(k), t=tiers().find(t=>t.key===k);
+    const meta=k==='fast'?'≈1 s · offline'
+      :`${t.model} · ${m?`AI wording +${t.secs} s`:'not installed'} · <span class="fit ${t.level}">${FITTXT[t.level]}</span>`;
+    return `<button class="choice" data-q="${k}" ${m?'':'disabled'} aria-pressed="${!!m&&m===cur}" title="${t?esc(t.why):''}"><b>${v.n}${k===rec?' <span class="rec">best for this machine</span>':''}</b><span>${v.d}</span><div class="meta">${meta}</div></button>`; }).join('');
+  $$('#quality .choice').forEach(b=>b.onclick=()=>{ $('#s_engine').value=q[b.dataset.q]; ctxHint(); drawQuality(); updateFlow(); });
+  const custom=!Object.values(q).includes(cur), missing=tiers().filter(t=>!q[t.key]&&t.level!=='no');
+  const hw=INFO?.fit?.hardware||{}, cur_t=tiers().find(t=>q[t.key]===cur);
+  $('#qHint').textContent=[
+    hw.chip?`This machine: ${hw.chip.replace(/^Apple /,'')} · ${hw.ram_gb} GB${hw.gpu?` · ${hw.gpu.name} ${hw.gpu.vram_gb} GB`:''}.`:'',
+    cur_t&&cur_t.level!=='good'?`${cur_t.name}: ${cur_t.why}.`:'',
+    custom?`Using ${cur.replace('ollama:','')} (set in Fine-tuning → Models).`:'',
+    missing.length?`Also runs here: ${missing.map(t=>t.name).join(', ')} — add it with “Add languages or AI models…” in the LiveTranslate menu.`:''
+  ].filter(Boolean).join(' '); }
+function qualityName(){ const q=qualityModels(), cur=$('#s_engine').value; const k=Object.keys(q).find(k=>q[k]===cur); return k?qualInfo(k).n:cur.replace('ollama:',''); }
+
+/* ---------- offline coverage: Fastest (Argos) only translates pairs installed on this machine */
+function offlineOk(f,t){ const P=new Set(INFO.argos_pairs||[]); return f===t||P.has(`${f}-${t}`)||(P.has(`${f}-en`)||f==='en')&&(P.has(`en-${t}`)||t==='en'); }
+function offlineGaps(){ const src=$('#s_source').value, L=formLangs(), froms=src==='auto'?L:[src];
+  return uniq(L.filter(t=>froms.some(f=>f!==t&&!offlineOk(f,t)))); }
+function langWarn(){ const gaps=offlineGaps(), fast=$('#s_engine').value==='argos';
+  const names=gaps.map(l=>INFO.langs[l][0]).join(', ');
+  $('#langWarn').textContent=!gaps.length?'':fast
+    ?`Fastest has no offline translation for ${names} on this machine — that audience would see the original. Choose Balanced or Most accurate, or add it: “Add languages or AI models…” in the LiveTranslate menu-bar / tray icon.`
+    :`${names}: translated by the local AI only (no offline fallback installed).`;
+  $('#langWarn').className='hint'+(gaps.length&&fast?' err':''); return gaps; }
+
+/* ---------- signal-flow strip: the whole setup at a glance */
+const short=n=>(n||'').replace(/\s*\(.*\)$/,'');
+function updateFlow(){ if(!INFO) return;
+  const dev=$('#s_device').value, src=$('#s_source').value, t=targets().filter(l=>l!==src), L=INFO.langs;
+  const g=+$('#s_gain_db').value||0;
+  $('#fl_in').textContent=`${short(dev)||'Default input'} · ch ${$('#s_channel').value||1}${g?` · ${g>0?'+':''}${g} dB`:''}`;
+  $('#fl_sp').textContent=src==='auto'?'Detected':L[src]?.[0]||'—';
+  $('#fl_sp2').textContent=src==='auto'?targets().map(l=>l.toUpperCase()).join(' · '):'';
+  $('#fl_aud').textContent=t.length?t.map(l=>L[l][0]).join(', '):'Choose languages';
+  const gaps=langWarn(), fast=$('#s_engine').value==='argos';
+  $('#fl_aud2').textContent=gaps.length&&fast?`${gaps.length} not available offline`:t.length?`${t.length} language${t.length>1?'s':''}`:'';
+  $('#fl_aud2').style.color=gaps.length&&fast?'var(--bad)':'';
+  $('#fl_q').textContent=qualityName(); $('#fl_q2').textContent=TYPES[eventType]?.n||'';
+  const on=(ndi.outputs||[]).filter(o=>o.on).length, c=ST.counts||{};
+  const n=(k,w)=>`${k} ${w}${k===1?'':'s'}`;
+  $('#fl_out').textContent=n((c.overlay||0)+on,'screen');                 // browser overlays + NDI sources
+  $('#fl_out2').textContent=`${on} NDI · ${n(c.guest||0,'phone')}`;
+}
+$$('.node[data-go]').forEach(n=>n.onclick=()=>document.getElementById(n.dataset.go).scrollIntoView({block:'start'}));
+$('.node[data-t2]').onclick=()=>$('nav button[data-t=captions]').click();
+document.addEventListener('input',e=>{ if(e.target.closest('#session')) updateFlow(); });
+
+/* ---------- header + live */
+function setState(m){
+  const first=!ST.session; ST=m;
+  const p=$('#pill'); p.className='pill '+(m.error?'err':m.loading?'load':m.running?'run':'');
+  p.textContent=m.error?'Attention':m.loading?'Loading models…':m.running?(m.paused?'Paused':'Live'):m.monitoring?'Checking input':'Stopped';
+  document.body.classList.toggle('live',!!m.running&&!m.paused);
+  $('#sname').textContent=m.running?m.session.name:''; $('#err').textContent=m.error||''; $('#notice').textContent=[m.port_note,m.echo_note,m.notice,m.stt_note].filter(Boolean).join(' ');
+  $('#startBtn').style.display=m.running||m.loading?'none':''; $('#stopBtn').style.display=m.running||m.loading?'':'none';
+  if(!m.loading){ $('#startBtn').disabled=false; $('#startBtn').textContent='Start session'; }
+  $('#applyBtn').style.display=m.running?'':'none'; $('#pause').style.display=m.running?'':'none';
+  if(m.running||m.loading) say('');
+  if(!m.running&&!m.monitoring){ $('#ic_state').textContent='Choose an input to check its level'; $('#ic_lvl').style.width='0'; $('#ic_db').textContent='—'; }
+  $('#inp').textContent=m.running&&!m.demo?`${m.session.device||'Default input'} · ch ${m.session.channel}`:'';
+  $('#pause').textContent=m.paused?'Resume':'Pause'; $('#pause').classList.toggle('red',!!m.paused);
+  const pl=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
+  $('#counts').textContent=`${pl(m.counts.guest,'phone')} · ${pl(m.counts.overlay,'screen')} · ${pl(m.counts.op,'operator')}${m.demo?' · demo':''}`;
+  if(first) fillForm({...INFO.default,...m.session});
+  const L=SL(m.session); $('#live').style.setProperty('--cols',L.length);
+  $('#lhead').innerHTML=L.map(l=>`<div>${INFO.langs[l][0]}</div>`).join('')+'<div></div>';
+  $('#srts').innerHTML=L.map(l=>`<a class="btn sm" href="/api/srt?lang=${l}" title="Subtitle file for recorded video">Subtitles ${l.toUpperCase()}</a>`).join('');
+  drawStyleForm(); updateFlow();
+}
+// one cell per session language: the original sits in the column of the language that was spoken
+function cells(m){ const sp=m.lang||ST.session.source;
+  return SL(ST.session).map(l=>l===sp?`<div class="src">${esc(m.src)} <small class="tag">${l}</small></div>`:`<div class="t">${esc(m.tr[l]??'')}</div>`).join(''); }
+const LM={};  // line id -> message, so AI refinements can redraw a line in place
+function lineEl(m){ const d=document.createElement('div'); d.className='ln'; d.id='l'+m.id;
+  LM[m.id]=m;
+  d.innerHTML=cells(m)+`<div><small title="${m.refined?'Improved by the local AI':m.refining?'Fast translation — the local AI is refining it':''}">${m.lat} s${m.refined?' · AI':''}</small> <button class="btn sm ghost" title="Remove this line from every screen" aria-label="Remove line">✕</button></div>`;
+  d.querySelector('button').onclick=()=>send({cmd:'delete',id:m.id}); return d; }
+function addLine(m){ const L=$('#lines'), end=L.lastChild?L.lastChild.getBoundingClientRect().top<innerHeight+50:true; L.appendChild(lineEl(m)); if(end&&$('#live').classList.contains('on')) L.lastChild.scrollIntoView({block:'end'}); }
+function send(o){ ws&&ws.readyState===1&&ws.send(JSON.stringify(o)); }
+$('#pause').onclick=()=>send({cmd:ST.paused?'resume':'pause'});
+$('#clearBtn').onclick=()=>send({cmd:'clear'});
+$('#say').onsubmit=e=>{ e.preventDefault(); send({cmd:'say',text:$('#sayTxt').value}); $('#sayTxt').value=''; };
+document.addEventListener('keydown',e=>{ if(e.code==='Space'&&ST.running&&!/INPUT|TEXTAREA|SELECT|BUTTON/.test(e.target.tagName)){ e.preventDefault(); $('#pause').click(); } });
+
+/* ---------- captions editor */
+const FIELDS=[
+ ['Content',[['lang','lang','Language'],['lang2','lang0','Second language (stacked)'],['mode','sel:rollup=Roll-up (continuous),pop=Pop-on (latest sentence)','Mode'],['rows','r:1:8:1','Rows'],['clear','r:0:30:1','Auto-hide after (s, 0 = never)'],['fade','r:0:1.5:0.05','Fade (s)'],['roll','r:0:600:20','Roll-up slide (ms, 0 = jump)'],['partialOpacity','r:0.3:1:0.05','Provisional text opacity']]],
+ ['Text',[['font','font','Font (installed on the vMix machine)'],['gfont','txt','Google Font name (needs internet), e.g. Montserrat'],['size','r:14:160:1','Size (px @1080p)'],['size2','r:0.4:1.3:0.05','Second language size ×'],['weight','sel:300,400,500,600,700,800,900','Weight'],['italic','chk','Italic'],['upper','chk','UPPERCASE'],['lineHeight','r:0.9:2:0.05','Line height'],['letterSpacing','r:-3:10:0.5','Letter spacing'],['color','col','Text colour'],['color2','col','Second language colour'],['outline','r:0:10:0.5','Outline'],['outlineColor','col','Outline colour'],['shadow','r:0:20:1','Shadow'],['shadowColor','col','Shadow colour']]],
+ ['Background box',[['box','sel:none=None,line=Per line (broadcast style),block=Single block','Box'],['boxColor','col','Box colour'],['boxOpacity','r:0:1:0.05','Box opacity'],['boxPadX','r:0:80:1','Padding X'],['boxPadY','r:0:40:1','Padding Y'],['boxRadius','r:0:40:1','Corner radius']]],
+ ['Position',[['pos','sel:bottom,middle,top','Vertical position'],['align','sel:center,left,right','Text alignment'],['width','r:20:100:1','Width (%)'],['offsetY','r:-500:700:5','Offset Y (px)'],['offsetX','r:-900:900:5','Offset X (px)']]],
+ ['Page',[['bg','sel:transparent=Transparent (vMix/OBS),green=Green (chroma),blue=Blue (chroma),black=Black','Page background']]],
+];
+const FONTS=['Helvetica Neue, Arial, sans-serif','Arial, sans-serif','Roboto, Arial, sans-serif','Inter, Arial, sans-serif','Open Sans, Arial, sans-serif','Montserrat, Arial, sans-serif','Verdana, sans-serif','Georgia, serif','Times New Roman, serif','Courier New, monospace'];
+let drawnFor='';
+function drawStyleForm(){
+  if(!INFO||!ST.session) return;
+  const langs=SL(ST.session), key=curP+'|'+langs.join()+'|'+Object.keys(presets).join();
+  $('#preset').innerHTML=Object.keys(presets).map(n=>`<option ${n===curP?'selected':''}>${n}</option>`).join('');
+  const url=`${INFO.base}/overlay?preset=${encodeURIComponent(curP)}`; $('#ovUrl').textContent=url;
+  if(!$('#pvf').src.includes('preset='+encodeURIComponent(curP)+'&')) $('#pvf').src=`/overlay?preset=${encodeURIComponent(curP)}&preview=1`;
+  if(drawnFor===key) return; drawnFor=key;
+  const S=presets[curP]||INFO.style, lo=(e)=>(e?'<option value="">— none —</option>':'')+langs.map(l=>`<option value="${l}">${INFO.langs[l][0]}</option>`).join('');
+  $('#styleForm').innerHTML=FIELDS.map(([g,fs])=>`<fieldset><legend>${g}</legend>`+fs.map(([k,t,lab])=>{
+    const v=S[k]; let h;
+    if(t==='lang'||t==='lang0') h=`<select data-s="${k}">${lo(t==='lang0')}</select>`;
+    else if(t.startsWith('sel:')) h=`<select data-s="${k}">${t.slice(4).split(',').map(o=>{const [a,b]=o.split('=');return `<option value="${a}">${b||a}</option>`}).join('')}</select>`;
+    else if(t.startsWith('r:')){ const [,a,b,st]=t.split(':'); h=`<div class="ctl"><input type="range" data-s="${k}" min="${a}" max="${b}" step="${st}"><output></output></div>`; }
+    else if(t==='chk') h=`<input type="checkbox" data-s="${k}">`;
+    else if(t==='col') h=`<input type="color" data-s="${k}">`;
+    else if(t==='font') h=`<input type="text" data-s="${k}" list="fontlist">`;
+    else h=`<input type="text" data-s="${k}">`;
+    return `<div class="f"><label>${lab}</label>${h}</div>`; }).join('')+'</fieldset>').join('')+`<datalist id="fontlist">${FONTS.map(f=>`<option value="${f}">`).join('')}</datalist>`;
+  $$('[data-s]').forEach(el=>{ const k=el.dataset.s, v=S[k];
+    if(el.type==='checkbox') el.checked=!!v; else el.value=v??'';
+    const out=el.parentElement.querySelector('output'); if(out) out.textContent=el.value;
+    el.addEventListener('input',()=>{ if(out) out.textContent=el.value; saveStyle(); }); });
+}
+let saveT;
+function readStyle(){ const S={...(presets[curP]||INFO.style)}; $$('[data-s]').forEach(el=>{ const k=el.dataset.s;
+  S[k]= el.type==='checkbox'?el.checked : (el.type==='range'||typeof INFO.style[k]==='number')?+el.value : el.value; }); return S; }
+function saveStyle(){ clearTimeout(saveT); saveT=setTimeout(()=>{ presets[curP]=readStyle(); api('presets',{name:curP,style:presets[curP]}); },150); }
+$('#preset').onchange=e=>{ curP=e.target.value; drawnFor=''; drawStyleForm(); };
+async function newPreset(copy){ const n=prompt('Preset name (letters, numbers, dashes)', copy?curP+'-copy':'fr-lower-third'); if(!n) return;
+  const name=n.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''); const style=copy?readStyle():{...INFO.style};
+  presets[name]=style; curP=name; drawnFor=''; await api('presets',{name,style}); drawStyleForm(); }
+$('#newP').onclick=()=>newPreset(false); $('#dupP').onclick=()=>newPreset(true);
+$('#delP').onclick=()=>{ if(curP==='default') return alert('The default preset cannot be deleted.'); if(confirm('Delete '+curP+'?')){ api('presets',{name:curP,delete:true}); curP='default'; drawnFor=''; } };
+$('#quitApp').onclick=async()=>{ if(!confirm(ST.running?'Quit LiveTranslate? The live session stops: screens, overlays and phones stop receiving captions.':'Quit LiveTranslate?')) return;
+  try{ await api('quit',{}); }catch(e){} document.body.innerHTML='<main style="max-width:520px;margin:20vh auto;padding:24px;font:15px var(--sans);color:var(--muted)"><h2 style="color:var(--text);font-weight:600">LiveTranslate has quit</h2><p>Open LiveTranslate again to restart it.</p></main>'; };
+$('#copyUrl').onclick=()=>{ navigator.clipboard?.writeText($('#ovUrl').textContent); $('#copyUrl').textContent='Copied'; setTimeout(()=>$('#copyUrl').textContent='Copy',1200); };
+function scalePv(){ const w=$('#pvw').clientWidth; $('#pvf').style.transform=`scale(${w/1920})`; }
+addEventListener('resize',scalePv);
+
+/* ---------- NDI outputs */
+let ndi={available:false,outputs:[]}, ndiDirty=false;  // unsaved edits: status refresh must not overwrite them
+function drawNdi(){
+  const L=ST.session?SL(ST.session):['fr'], P=Object.keys(presets);
+  $('#ndiT').innerHTML=!ndi.outputs.length?'':`<tr><th>On</th><th>NDI name</th><th>Look</th><th>Language</th><th></th></tr>`+ndi.outputs.map((o,i)=>`<tr data-n="${i}">
+    <td><input type="checkbox" data-k="on" ${o.on?'checked':''}></td><td><input type="text" data-k="name" value="${esc(o.name)}"></td>
+    <td><select data-k="preset">${P.map(p=>`<option ${p===o.preset?'selected':''}>${esc(p)}</option>`).join('')}</select></td>
+    <td><select data-k="lang">${L.map(l=>`<option value="${l}" ${l===o.lang?'selected':''}>${INFO.langs[l][0]}</option>`).join('')}</select></td>
+    <td><span style="color:${o.running?'var(--ok)':'var(--faint)'};font-size:13px">${o.running?'● Sending':'Off'}</span> <button class="btn sm ghost" data-del="${i}" aria-label="Remove output">Remove</button></td></tr>`).join('');
+  $$('#ndiT [data-del]').forEach(b=>b.onclick=()=>{ readNdi(); ndi.outputs.splice(+b.dataset.del,1); ndiDirty=true; drawNdi(); });
+  $$('#ndiT [data-k]').forEach(i=>i.onchange=i.oninput=()=>{ ndiDirty=true; $('#ndiMsg').textContent='Not saved yet'; });
+  $('#ndiHint').style.color=ndi.available?'':'var(--bad)';
+  if(!ndi.available) $('#ndiMsg').textContent='NDI is not installed on this computer. Install NDI Tools from ndi.video/tools.';
+  updateFlow();
+}
+function readNdi(){ $$('#ndiT tr[data-n]').forEach(tr=>{ const o=ndi.outputs[+tr.dataset.n]; tr.querySelectorAll('[data-k]').forEach(i=>o[i.dataset.k]=i.type==='checkbox'?i.checked:i.value); }); }
+$('#ndiAdd').onclick=()=>{ readNdi(); const L=ST.session?SL(ST.session):['fr'], pref=ST.session&&ST.session.source!=='auto'?[...L.filter(x=>x!==ST.session.source),ST.session.source]:L,
+    l=pref.find(x=>!ndi.outputs.some(o=>o.lang===x))||pref[0];  // translations first: that's what subtitles are for
+  ndi.outputs.push({name:`LiveTranslate ${l.toUpperCase()}`,preset:presets.subtitles?'subtitles':'default',lang:l,on:true});
+  ndiDirty=true; drawNdi(); $('#ndiMsg').textContent='Not saved yet'; };
+$('#ndiSave').onclick=async()=>{ readNdi();
+  try{ ndi=await api('ndi',{outputs:ndi.outputs}); }catch(e){ $('#ndiMsg').textContent='Not saved — the server did not answer. Try again.'; return; }
+  ndiDirty=false; $('#ndiMsg').textContent='Saved and applied'; drawNdi();
+  setTimeout(async()=>{ try{ ndi=await api('ndi'); drawNdi(); $('#ndiMsg').textContent=''; }catch(e){} },2500); };
+setInterval(async()=>{ if($('#captions').classList.contains('on')&&!ndiDirty){ try{ ndi=await api('ndi'); drawNdi(); }catch(e){} } },4000);
+
+/* ---------- admin access: password for other devices (this machine itself never needs it) */
+function drawAccess(){ const a=INFO.auth||{};
+  $('#accessHint').textContent=!a.has_password?'Not possible yet: set an admin password first. Until then Control only opens on this machine.'
+    :a.weak?'Protected only by the old 4-digit PIN. Set a proper admin password.'
+    :`Sign in with the admin password${a.changed?` (changed ${a.changed})`:''}. Five wrong attempts lock that device for a while.`;
+  $('#curWrap').style.display=a.has_password&&!a.local?'':'none';
+  $('#pwNewL').textContent=a.has_password?'New admin password':'Admin password';
+  $('#logoutBtn').style.display=a.local?'none':''; $('#signoutAll').style.display=a.has_password?'':'none';
+  $('#authNote').innerHTML=a.local&&(!a.has_password||a.weak)?'Set an admin password to use Control from other devices: <a href="#" id="toAccess">Access → Admins</a>':'';
+  const t=$('#toAccess'); if(t) t.onclick=e=>{ e.preventDefault(); $('nav button[data-t=audience]').click(); $('#pwNew').focus(); }; }
+$('#pwForm').onsubmit=async e=>{ e.preventDefault(); const n=$('#pwNew').value;
+  if(n.length<8) return $('#pwMsg').textContent='Use at least 8 characters.';
+  if(n!==$('#pwNew2').value) return $('#pwMsg').textContent='The two passwords are different.';
+  const r=await api('password',{current:$('#pwCur').value,new:n});
+  $('#pwMsg').textContent=r.ok?'Saved. Other devices must sign in again.':r.error;
+  if(r.ok){ ['#pwCur','#pwNew','#pwNew2'].forEach(s=>$(s).value=''); INFO.auth={...INFO.auth,...r}; drawAccess(); } };
+$('#signoutAll').onclick=async()=>{ if(!confirm('Sign out every other browser? They will need the admin password again.')) return;
+  const r=await api('signout_all',{}); $('#pwMsg').textContent=r.ok?'All other devices are signed out.':'Could not sign out other devices.'; };
+
+/* ---------- boot */
+function connect(){
+  ws=new WebSocket(`ws://${location.host}/ws?kind=op`);
+  ws.onmessage=e=>{ const m=JSON.parse(e.data);
+    if(m.type==='auth'&&!m.ok){ location.href='/login'; return; }
+    if(m.type==='state') setState(m);
+    else if(m.type==='level'){ const w=Math.max(0,Math.min(100,(m.db+60)/60*100))+'%';
+      ['#lvl','#fl_lvl','#ic_lvl'].forEach(s=>$(s).style.width=w); $('#db').textContent=$('#ic_db').textContent=m.db<-90?'—':m.db.toFixed(0)+' dB';
+      $('#ic_state').textContent=m.db<-55?'No signal — check the channel':m.db>-1.5?'Clipping — lower the send':m.db>-6?'Hot — lower the send a little':'Signal OK'; }
+    else if(m.type==='presets'){ presets=m.presets; if(!presets[curP]) curP='default'; drawStyleForm(); if(!ndiDirty) drawNdi(); else { readNdi(); drawNdi(); } updateFlow(); }
+    else if(m.type==='history'){ $('#lines').innerHTML=''; m.lines.forEach(addLine); }
+    else if(m.type==='line'){ addLine(m); $('#partial').innerHTML=''; }
+    else if(m.type==='partial') $('#partial').innerHTML=m.src?cells(m)+'<div></div>':'';
+    else if(m.type==='delete'){ const r=$('#l'+m.id); r&&r.remove(); }
+    else if(m.type==='update'){ const L=LM[m.id], r=$('#l'+m.id); if(L){ L.tr=m.tr; L.refined=true; if(r) r.replaceWith(lineEl(L)); } }
+    else if(m.type==='clear') $('#lines').innerHTML='';
+  };
+  ws.onclose=()=>{ $('#pill').textContent='Reconnecting…'; $('#pill').className='pill err'; setTimeout(connect,1500); };
+}
+// Boot: only /api/info is required. Everything else is optional and may fail (e.g. a server older than this
+// page after an update) without taking the live connection, the caption editor or the outputs down with it.
+const opt=(p,fallback)=>p.catch(e=>{ console.warn('optional call failed',e); return fallback; });
+(async()=>{
+  INFO=await api('info');
+  { const v=INFO.voices||[], L=INFO.langs||{};
+    $('#voiceHint').textContent=v.length?`What phones hear when they tap Listen. Natural voice: ${v.map(l=>(L[l]||[l])[0]).join(', ')}; other languages use the phone's own voice.`
+      :'Natural voice not installed — phones use their own voice. Run setup again (“Add languages or AI models…”) to add it.';
+    $('#s_voice_gender').disabled=!v.length; }
+  [devices,ollama,ndi]=await Promise.all([opt(api('devices'),[]),opt(api('ollama'),[]),opt(api('ndi'),{available:false,outputs:[]})]);
+  $('#gUrl').textContent=INFO.base+'/'; $('#cUrl').textContent=INFO.base+'/control'; drawAccess();
+  connect(); opt(loadSaved());
+})();
+</script></body></html>

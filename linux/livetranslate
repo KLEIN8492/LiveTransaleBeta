@@ -1,0 +1,48 @@
+#!/bin/bash
+# LiveTranslate launcher (Linux). First run or --setup: the setup page installs Python packages + models into
+# ~/.local/share/LiveTranslate. Afterwards: tray app (server + private AI runtime), or headless with no desktop.
+#   livetranslate                 start (opens Control in the browser)
+#   livetranslate --setup         add languages / AI models
+#   livetranslate --setup --lan   setup page reachable from another computer (a box without a screen)
+#   livetranslate --service       install + start as a background service that starts at boot (no desktop needed)
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+SUP="${LT_SUPPORT:-$HOME/.local/share/LiveTranslate}"
+mkdir -p "$SUP/logs"
+export LT_SUPPORT="$SUP" LT_DATA="$SUP" HF_HOME="$SUP/hf" \
+  XDG_DATA_HOME="$SUP/xdg/data" XDG_CACHE_HOME="$SUP/xdg/cache" XDG_CONFIG_HOME="$SUP/xdg/config" \
+  UV_PYTHON_INSTALL_DIR="$SUP/python" UV_CACHE_DIR="$SUP/uv-cache" UV_PYTHON_PREFERENCE=only-managed \
+  OLLAMA_MODELS="$SUP/ollama/models" PYTHONIOENCODING=utf-8
+LOG="$SUP/logs/setup.log"
+
+if [ "$1" = "--service" ]; then
+  U="$HOME/.config/systemd/user"; mkdir -p "$U"
+  cat > "$U/livetranslate.service" <<UNIT
+[Unit]
+Description=LiveTranslate (live speech translation server)
+After=network-online.target sound.target
+
+[Service]
+ExecStart=$HERE/livetranslate --headless
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+UNIT
+  systemctl --user daemon-reload && systemctl --user enable --now livetranslate.service
+  loginctl enable-linger "$USER" 2>/dev/null || echo "(run 'sudo loginctl enable-linger $USER' so it starts at boot without logging in)"
+  PORT=$(grep -o '"port": *[0-9]*' "$SUP/config.json" 2>/dev/null | grep -o '[0-9]*$'); PORT=${PORT:-8180}
+  echo "LiveTranslate runs as a service: http://$(hostname -I 2>/dev/null | awk '{print $1}'):$PORT/control"
+  exit 0
+fi
+
+if [ "$1" = "--setup" ] || [ ! -f "$SUP/installed.json" ]; then
+  "$HERE/uv" python install 3.11 >>"$LOG" 2>&1 || { echo "Setup needs an internet connection the first time." >&2; exit 1; }
+  PYB="$("$HERE/uv" python find 3.11)"
+  EXTRA=""; [ "$2" = "--lan" ] && EXTRA="--host 0.0.0.0 --port 8090 --no-browser"
+  [ -z "$DISPLAY$WAYLAND_DISPLAY" ] && EXTRA="--host 0.0.0.0 --port 8090 --no-browser"
+  [ -n "$EXTRA" ] && echo "Setup page: http://$(hostname -I 2>/dev/null | awk '{print $1}'):8090/  (open it from another computer)"
+  exec "$PYB" "$HERE/app/installer.py" --sup "$SUP" --app "$HERE/app" --uv "$HERE/uv" --bundle "$HERE/livetranslate" $EXTRA
+fi
+[ -x "$SUP/venv/bin/python" ] || { echo "LiveTranslate is not fully installed: run livetranslate --setup" >&2; exit 1; }
+cd "$HERE/app" && exec "$SUP/venv/bin/python" tray.py --launcher "$HERE/livetranslate" "$@"

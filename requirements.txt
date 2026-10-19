@@ -1,0 +1,20 @@
+aiohttp
+numpy
+sounddevice
+webrtcvad-wheels
+argostranslate
+qrcode
+pillow
+# natural voice for listeners (Kokoro, ONNX on the CPU) + MP3 for phones
+kokoro-onnx
+lameenc
+# macOS: MLX speech recognition on Apple Silicon, menu-bar app, WebKit NDI renderer
+mlx-whisper; sys_platform == "darwin"
+mlx-lm; sys_platform == "darwin"
+rumps; sys_platform == "darwin"
+pyobjc-framework-WebKit; sys_platform == "darwin"
+pyobjc-framework-Quartz; sys_platform == "darwin"
+# Windows / Linux: faster-whisper (CUDA when an NVIDIA card is present), system-tray app
+faster-whisper; sys_platform != "darwin"
+pystray; sys_platform != "darwin"
+zstandard; sys_platform == "linux"

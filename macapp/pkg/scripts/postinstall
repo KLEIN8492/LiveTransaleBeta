@@ -1,0 +1,10 @@
+#!/bin/bash
+# Runs as root after the app is copied. Open LiveTranslate as the person who is logged in, so the setup
+# page (first install) or the updated app (reinstall) appears immediately.
+U=$(stat -f %Su /dev/console)
+if [ -n "$U" ] && [ "$U" != "root" ] && [ "$U" != "loginwindow" ]; then
+  # an already-running copy (update): quit it so the new version starts
+  pkill -u "$U" -f " menubar.py$" 2>/dev/null; sleep 1
+  launchctl asuser "$(id -u "$U")" sudo -u "$U" /usr/bin/open -a "/Applications/LiveTranslate.app"
+fi
+exit 0

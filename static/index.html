@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d0f12"><meta name="color-scheme" content="dark">
+<title>Live translation</title>
+<link rel="preload" href="/fonts/Geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<style>
+/* Audience page — same system as Control (see /.impeccable.md): tinted near-black, colour only for state.
+   Built for reading for an hour in a dark room: big calm type, newest line brightest, older lines fade away. */
+:root{
+  --h:262;
+  --bg:oklch(0.150 0.006 var(--h));--surface:oklch(0.178 0.006 var(--h));--raise:oklch(0.212 0.007 var(--h));
+  --line:oklch(0.255 0.007 var(--h));--line2:oklch(0.320 0.008 var(--h));
+  --text:oklch(0.935 0.004 var(--h));--muted:oklch(0.690 0.008 var(--h));--faint:oklch(0.600 0.008 var(--h));
+  --sel:oklch(0.935 0.004 var(--h) / .08);
+  --live:oklch(0.640 0.170 25);--warn:oklch(0.800 0.110 80);
+  --ease:cubic-bezier(.25,1,.5,1);
+  --sans:"Geist",-apple-system,"SF Pro Text",system-ui,sans-serif;
+  --legend:"Archivo","Arial Narrow",sans-serif;
+  --fs:26px;
+  color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:1px solid var(--text);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}.l .w{opacity:1}}
+.legend{font:600 11px/1 var(--legend);font-stretch:72%;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+
+/* ---------- language picker */
+#pick{min-height:100%;display:flex;flex-direction:column;justify-content:center;max-width:460px;margin:0 auto;
+  padding:max(40px,env(safe-area-inset-top)) 24px max(32px,env(safe-area-inset-bottom))}
+#pick .legend{margin:0 0 12px}
+#evt{font:600 28px/1.15 var(--sans);letter-spacing:-.02em;margin:0 0 8px}
+#evt:empty{display:none}
+#choose{color:var(--muted);font-size:15px;line-height:1.5;margin:0 0 28px}
+#btns{border-top:1px solid var(--line)}
+#btns button{width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:64px;padding:0 4px;
+  background:none;border:0;border-bottom:1px solid var(--line);text-align:start;transition:background .15s var(--ease)}
+#btns button b{font:500 21px var(--sans);letter-spacing:-.01em}
+#btns button:active{background:var(--sel)}
+#btns button[aria-current=true] b{color:var(--text)}#btns button[aria-current=true]::after{border-color:var(--text)}
+#btns button:not([aria-current=true]) b{color:var(--muted)}
+#btns.none-current button b{color:var(--text)}
+#btns button::after{content:"";width:8px;height:8px;border-top:1.5px solid var(--faint);border-right:1.5px solid var(--faint);transform:rotate(45deg);margin-right:6px}
+[dir=rtl] #btns button::after{transform:rotate(-135deg)}
+#pick .note{color:var(--faint);font-size:13px;line-height:1.5;margin:24px 0 0}
+
+/* ---------- reading view */
+#live{display:none;flex-direction:column;height:100%}
+header{display:flex;align-items:center;gap:8px;padding:8px 12px;padding-top:max(8px,env(safe-area-inset-top));
+  border-bottom:1px solid var(--line);background:var(--bg)}
+#langBtn{color:var(--text);font-weight:500;padding:0 10px 0 12px;min-width:0}
+#langBtn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#langBtn::after{content:"";flex:none;width:6px;height:6px;border-right:1.5px solid var(--faint);border-bottom:1.5px solid var(--faint);transform:rotate(45deg) translateY(-2px);margin-inline-start:2px}
+.tool{height:42px;min-width:44px;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:0 12px;
+  border:1px solid var(--line);border-radius:6px;background:none;color:var(--muted);font-size:14px;transition:all .15s var(--ease)}
+.tool svg{flex:none;width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.tool.on{background:var(--text);border-color:var(--text);color:var(--bg)}
+.tool:active{transform:translateY(1px)}
+.size{display:flex}.size .tool{border-radius:0;font-weight:500}.size .tool:first-child{border-radius:6px 0 0 6px}.size .tool+.tool{border-left:0;border-radius:0 6px 6px 0}
+#st{margin-inline-start:auto;display:flex;align-items:center;gap:7px;white-space:nowrap;padding-inline-start:4px}
+#st i{width:7px;height:7px;border-radius:50%;background:var(--warn)}
+#st.live i{background:var(--live)}
+#lines{flex:1;overflow-y:auto;padding:28px 22px max(48px,env(safe-area-inset-bottom));-webkit-overflow-scrolling:touch;
+  /* older lines fade out under the bar: the eye stays on the newest one */
+}
+#lines.overflow{-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 72px);mask-image:linear-gradient(to bottom,transparent 0,#000 72px)}
+#lines>*{max-width:34em;margin-inline:auto}
+.l{font-size:var(--fs);line-height:1.45;margin:0 0 .8em;color:var(--faint);transition:color .4s var(--ease)}
+.l:nth-last-child(2){color:var(--text)}
+#part{font-size:var(--fs);line-height:1.45;margin:0 0 .8em;color:var(--muted)}#part:empty{display:none}
+/* paced reading: words fade in one after another; AI improvements crossfade once a line has finished */
+.l .w{opacity:0;transition:opacity .35s var(--ease)}.l .w.on{opacity:1}
+.l.swap{opacity:.2;transition:opacity .22s var(--ease)}
+#sheet{position:absolute;top:calc(100% + 6px);right:12px;width:min(300px,calc(100vw - 24px));background:var(--surface);border:1px solid var(--line2);
+  border-radius:8px;padding:16px;z-index:5;box-shadow:0 16px 40px -12px oklch(0 0 0 / .6)}
+[dir=rtl] #sheet{right:auto;left:12px}
+#sheet[hidden]{display:none}
+#sheet .row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+#sheet .row+.row{margin-top:16px}
+#sheet .k{font-size:14px;color:var(--muted)}
+#sheet .seg{display:flex;border:1px solid var(--line);border-radius:6px;padding:2px;gap:2px}
+#sheet .seg button{height:36px;min-width:44px;padding:0 10px;border:0;border-radius:4px;background:none;color:var(--faint);font-size:13.5px}
+#sheet .seg button[aria-pressed=true]{background:var(--raise);color:var(--text)}
+#sheet .help{color:var(--faint);font-size:12.5px;line-height:1.45;margin:10px 0 0}
+header{position:relative}
+#hint{color:var(--faint);font-size:17px;line-height:1.5;text-align:center;margin-top:32vh}
+@media (min-width:700px){#lines{padding-inline:48px}}
+@media (max-width:420px){#stL{display:none}}  /* phones: live dot alone (still announced) — room for the language name */
+@media (max-width:340px){#voiceL{display:none}}
+</style></head><body>
+<div id="pick">
+  <p class="legend">Live translation</p>
+  <h1 id="evt"></h1>
+  <p id="choose"></p>
+  <div id="btns"></div>
+  <p class="note" id="note"></p>
+</div>
+<div id="live">
+  <header>
+    <button class="tool" id="langBtn" aria-label="Change language"><span id="langL"></span></button>
+    <button class="tool" id="voice" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3l4.5-4v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></svg><span id="voiceL"></span></button>
+    <button class="tool" id="aa" aria-haspopup="true" aria-expanded="false" aria-label="Text and reading">Aa</button>
+    <span id="st" class="legend" aria-live="polite"><i></i><span id="stL"></span></span>
+    <div id="sheet" hidden role="dialog" aria-label="Text and reading">
+      <div class="row"><span class="k" id="kSize"></span><div class="seg"><button id="minus" aria-label="Smaller text">A−</button><button id="plus" aria-label="Larger text">A+</button></div></div>
+      <div class="row"><span class="k" id="kRead"></span><div class="seg" id="paceSeg"><button data-p="live"></button><button data-p="smooth"></button><button data-p="relaxed"></button></div></div>
+      <p class="help" id="paceHelp"></p>
+    </div>
+  </header>
+  <div id="lines" aria-live="polite"></div>
+</div>
+<script>
+const $=s=>document.querySelector(s), lines=$('#lines');
+const LC={fr:'fr-FR',es:'es-ES',en:'en-US',de:'de-DE',it:'it-IT',pt:'pt-PT',nl:'nl-NL',ro:'ro-RO',pl:'pl-PL',uk:'uk-UA',ru:'ru-RU',ar:'ar-SA',zh:'zh-CN',ja:'ja-JP',ko:'ko-KR'};
+const NAMES={en:'English',fr:'Français',es:'Español',de:'Deutsch',it:'Italiano',pt:'Português',nl:'Nederlands',ro:'Română',pl:'Polski',uk:'Українська',ru:'Русский',ar:'العربية',zh:'中文',ja:'日本語',ko:'한국어'};
+// interface words in the reader's language; "choose" is shown in every language of the event on the picker
+const T={
+  en:{choose:'Choose your language',wait:'The translation appears here as soon as the speaker starts.',listen:'Listen',on:'Voice on',live:'Live',off:'Reconnecting',note:'Use earphones to listen. Keep your screen on.',size:'Text size',reading:'Reading',pL:'Live',pS:'Smooth',pR:'Relaxed',hL:'Words appear as they are spoken, then settle.',hS:'Each sentence writes itself at a calm pace.',hR:'Slower, and waits for the best translation.'},
+  fr:{choose:'Choisissez votre langue',wait:'La traduction apparaît ici dès que l’orateur commence.',listen:'Écouter',on:'Voix activée',live:'En direct',off:'Reconnexion',note:'Utilisez des écouteurs pour écouter. Gardez l’écran allumé.',size:'Taille du texte',reading:'Lecture',pL:'Direct',pS:'Fluide',pR:'Posé',hL:'Les mots apparaissent pendant qu’on parle, puis se stabilisent.',hS:'Chaque phrase s’écrit à un rythme calme.',hR:'Plus lent, attend la meilleure traduction.'},
+  es:{choose:'Elija su idioma',wait:'La traducción aparece aquí en cuanto empiece el orador.',listen:'Escuchar',on:'Voz activada',live:'En directo',off:'Reconectando',note:'Use auriculares para escuchar. Mantenga la pantalla encendida.',size:'Tamaño del texto',reading:'Lectura',pL:'Directo',pS:'Fluido',pR:'Pausado',hL:'Las palabras aparecen mientras se habla y luego se ajustan.',hS:'Cada frase se escribe a un ritmo tranquilo.',hR:'Más lento, espera la mejor traducción.'},
+  de:{choose:'Sprache wählen',wait:'Die Übersetzung erscheint hier, sobald der Redner beginnt.',listen:'Anhören',on:'Stimme an',live:'Live',off:'Verbinde neu',note:'Zum Anhören Kopfhörer verwenden. Bildschirm eingeschaltet lassen.',size:'Textgröße',reading:'Lesen',pL:'Live',pS:'Fließend',pR:'Ruhig',hL:'Wörter erscheinen beim Sprechen und stabilisieren sich dann.',hS:'Jeder Satz schreibt sich in ruhigem Tempo.',hR:'Langsamer, wartet auf die beste Übersetzung.'},
+  it:{choose:'Scegli la lingua',wait:'La traduzione appare qui appena l’oratore inizia.',listen:'Ascolta',on:'Voce attiva',live:'In diretta',off:'Riconnessione',note:'Usa gli auricolari per ascoltare. Tieni lo schermo acceso.',size:'Dimensione testo',reading:'Lettura',pL:'Diretta',pS:'Fluida',pR:'Calma',hL:'Le parole appaiono mentre si parla, poi si stabilizzano.',hS:'Ogni frase si scrive con un ritmo tranquillo.',hR:'Più lenta, attende la traduzione migliore.'},
+  pt:{choose:'Escolha o idioma',wait:'A tradução aparece aqui assim que o orador começar.',listen:'Ouvir',on:'Voz ativada',live:'Em direto',off:'A ligar',note:'Use auriculares para ouvir. Mantenha o ecrã ligado.',size:'Tamanho do texto',reading:'Leitura',pL:'Direto',pS:'Fluido',pR:'Calmo',hL:'As palavras aparecem enquanto se fala e depois estabilizam.',hS:'Cada frase escreve-se a um ritmo calmo.',hR:'Mais lento, espera pela melhor tradução.'},
+  nl:{choose:'Kies je taal',wait:'De vertaling verschijnt hier zodra de spreker begint.',listen:'Luisteren',on:'Stem aan',live:'Live',off:'Opnieuw verbinden',note:'Gebruik oordopjes om te luisteren. Laat je scherm aan.',size:'Tekstgrootte',reading:'Lezen',pL:'Live',pS:'Vloeiend',pR:'Rustig',hL:'Woorden verschijnen tijdens het spreken en worden daarna vast.',hS:'Elke zin schrijft zich in een rustig tempo.',hR:'Langzamer, wacht op de beste vertaling.'},
+};
+const tt=k=>(T[lang]||T.en)[k];
+let session={source:'en',langs:[]};
+const store={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+let lang=null, hist=[], voice=false, fs=+store.get('fs')||26, ws, online=false;
+document.documentElement.style.setProperty('--fs',fs+'px');
+
+function start(l){ $('#pick').style.display='none'; $('#live').style.display='flex'; setLang(l); }
+function buildLangs(){
+  $('#evt').textContent=session.name||'';
+  const ls=session.langs.length?session.langs:['en'];
+  $('#choose').textContent=[...new Set(ls.map(l=>(T[l]||T.en).choose))].join(' · ');
+  $('#note').textContent=(T[ls[0]]||T.en).note;
+  $('#btns').innerHTML='';
+  session.langs.forEach(l=>{ const b=document.createElement('button'); b.lang=l; b.dir=l==='ar'?'rtl':'ltr'; b.dataset.sw=l;
+    b.innerHTML=`<b>${NAMES[l]||l}</b>`; b.onclick=()=>start(l); $('#btns').appendChild(b); });
+  if(lang&&session.langs.length&&!session.langs.includes(lang)){  // saved language not offered at this event
+    lang=null; $('#live').style.display='none'; $('#pick').style.display='flex'; }
+  $('#btns').classList.toggle('none-current',!lang);
+  if(lang) setLang(lang);
+}
+function setLang(l){ if(l!==lang) stopVoice(); lang=l; store.set('lang',l); document.documentElement.lang=l;
+  document.querySelectorAll('[data-sw]').forEach(b=>b.setAttribute('aria-current',String(b.dataset.sw===l)));
+  $('#btns').classList.remove('none-current'); $('#langL').textContent=NAMES[l]||l.toUpperCase();
+  document.documentElement.dir=l==='ar'?'rtl':'ltr';
+  $('#voiceL').textContent=tt('listen'); $('#kSize').textContent=tt('size'); $('#kRead').textContent=tt('reading');
+  document.querySelectorAll('#paceSeg button').forEach(b=>b.textContent=tt({live:'pL',smooth:'pS',relaxed:'pR'}[b.dataset.p]));
+  if(pace) $('#paceHelp').textContent=tt({live:'hL',smooth:'hS',relaxed:'hR'}[pace]); st(); render(); }
+function st(){ $('#stL').textContent=online?tt('live'):tt('off'); $('#st').classList.toggle('live',online); }
+let partial=null;
+/* ---- reading styles. live: as fast as possible (provisional words, instant swaps). smooth/relaxed: no provisional text;
+   each final line writes itself word by word at a reading pace; the queue speeds up if it falls behind; AI improvements
+   crossfade in after a line has finished. relaxed also waits (up to 2.5 s) for the AI version so lines rarely change. */
+const PACE={smooth:{wps:7,wait:0},relaxed:{wps:4,wait:2500}};
+const REDUCE=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let pace=null, Q=[], revealing=null, revealT=null;
+const curPace=()=>store.get('pace')||session.phone_pace||'smooth';
+function setPace(p,mine){ if(mine) store.set('pace',p); const changed=p!==pace; pace=p;
+  document.querySelectorAll('#paceSeg button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.p===p)));
+  $('#paceHelp').textContent=tt({live:'hL',smooth:'hS',relaxed:'hR'}[p]); if(changed&&lang) render(); }
+function render(){ clearTimeout(revealT); revealing=null; Q=[]; hist.forEach(h=>{ clearTimeout(h._hold); h._held=false; });
+  lines.innerHTML=''; if(!hist.length){lines.innerHTML=`<p id="hint">${tt('wait')}</p>`} hist.forEach(add); const p=document.createElement('p'); p.id='part'; lines.appendChild(p); drawPartial(); toEnd(); }
+function drawPartial(){ const p=$('#part'); if(!p) return; const t=pace==='live'&&partial&&(lang===(partial.lang||session.source)?partial.src:partial.tr[lang]); p.textContent=t?t+' …':''; }
+const tokens=t=>/^(zh|ja)/.test(lang)?Array.from(t):t.split(/(\s+)/);
+function enqueue(m){ const P=PACE[pace];
+  if(P.wait&&m.refining&&!m._held){ m._held=true; m._hold=setTimeout(()=>release(m),P.wait); return; }
+  Q.push(m); pump(); }
+function release(m){ if(!m._held) return; m._held=false; clearTimeout(m._hold); if(hist.includes(m)){ Q.push(m); pump(); } }
+function pump(){ if(revealing||!Q.length) return;
+  const m=Q.shift(), b=nearEnd(), hint=$('#hint'); hint&&hint.remove();
+  const p=document.createElement('p'); p.className='l'; p.id='m'+m.id;
+  const ws=[]; tokens(txt(m)).forEach(t=>{ if(/^\s+$/.test(t)||!t){ p.appendChild(document.createTextNode(t)); return; }
+    const sp=document.createElement('span'); sp.className='w'; sp.textContent=t; p.appendChild(sp); ws.push(sp); });
+  lines.insertBefore(p,$('#part')); revealing=m; if(voice) say(m); if(b) toEnd(true);
+  let i=0; const step=()=>{ if(revealing!==m) return;
+    if(i<ws.length){ ws[i++].classList.add('on'); if(nearEnd()) toEnd(true);
+      revealT=setTimeout(step,1000/(PACE[pace].wps*(1+Q.length*0.75))); return; }  // backlog: speed up, never fall behind
+    revealing=null; if(m._swap){ m._swap=false; crossfade(m); } pump(); };
+  step(); }
+function crossfade(m){ const e=$('#m'+m.id); if(!e) return; const t=txt(m); if(e.textContent===t) return;
+  if(REDUCE||pace==='live'){ e.textContent=t; return; }
+  e.classList.add('swap'); setTimeout(()=>{ e.textContent=t; e.classList.remove('swap'); },230); }
+function add(m){ const h=$('#hint'); h&&h.remove(); const p=document.createElement('p');
+  p.className='l'; p.id='m'+m.id; p.textContent=txt(m); lines.insertBefore(p,$('#part')); }
+function txt(m){ return lang===(m.lang||session.source)?m.src:(m.tr[lang]||m.src) }  // original if spoken in my language
+function nearEnd(){ return lines.scrollHeight-lines.scrollTop-lines.clientHeight<120 }
+function toEnd(smooth){ if(smooth&&!REDUCE) lines.scrollTo({top:lines.scrollHeight,behavior:'smooth'}); else lines.scrollTop=lines.scrollHeight;
+  lines.classList.toggle('overflow',lines.scrollHeight>lines.clientHeight+4); }
+
+function onMsg(m){
+  if(m.type==='session'){ session=m; buildLangs(); if(!store.get('pace')) setPace(curPace()); }
+  else if(m.type==='history'){ hist=m.lines; render(); }
+  else if(m.type==='line'){ hist.push(m); if(hist.length>60){ const o=hist.shift(); $('#m'+o.id)?.remove(); } partial=null; drawPartial();
+    if(pace==='live'){ const b=nearEnd(); add(m); if(b)toEnd(); if(voice)say(m); } else enqueue(m); }
+  else if(m.type==='partial'){ const b=nearEnd(); partial=m.src?m:null; drawPartial(); if(b&&pace==='live')toEnd(); }
+  else if(m.type==='delete'){ hist=hist.filter(x=>x.id!==m.id); Q=Q.filter(x=>x.id!==m.id); if(revealing&&revealing.id===m.id){ revealing=null; pump(); } const e=$('#m'+m.id); e&&e.remove(); }
+  else if(m.type==='update'){ const h=hist.find(x=>x.id===m.id); if(!h) return; h.tr=m.tr; h.refining=false;  // AI refinement
+    if(h._held) release(h); else if(revealing===h) h._swap=true; else if($('#m'+h.id)) crossfade(h); }
+  else if(m.type==='clear'){ hist=[]; render(); }
+}
+function connect(){
+  ws=new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen=()=>{online=true;st()};
+  ws.onmessage=e=>onMsg(JSON.parse(e.data));
+  ws.onclose=()=>{online=false;st();setTimeout(connect,1500)};
+}
+/* ---- Listen. Natural voice (server-side neural TTS, one MP3 per sentence, shared by every phone in the language)
+   where the server has one for this language; otherwise the phone's own voice. One <audio> element, unlocked by the
+   Listen tap (iOS/Android only allow sound that starts from a tap), then fed sentence after sentence. */
+const player=new Audio(); let AQ=[], playing=false;
+const natural=()=>(session.voices||[]).includes(lang);
+function say(m){ if(!natural()) return speak(txt(m));
+  AQ.push(`/tts/${m.id}/${lang}.mp3`); if(AQ.length>2) AQ=AQ.slice(-2);  // fell far behind: keep the newest sentences
+  playNext(); }
+function playNext(){ if(playing||!AQ.length||!voice) return; playing=true;
+  player.src=AQ.shift(); player.playbackRate=AQ.length?1.12:1;  // a sentence waiting: a touch faster to catch up
+  player.play().catch(()=>{ playing=false; setTimeout(playNext,50); }); }
+player.onended=player.onerror=()=>{ playing=false; playNext(); };
+function stopVoice(){ AQ=[]; playing=false; player.pause(); player.removeAttribute('src'); if('speechSynthesis' in window) speechSynthesis.cancel(); }
+function speak(t){
+  if(!('speechSynthesis' in window)) return;
+  const u=new SpeechSynthesisUtterance(t); u.lang=LC[lang]; u.rate=1.05;
+  const vs=speechSynthesis.getVoices(), v=vs.find(v=>v.lang.replace('_','-')===LC[lang])||vs.find(v=>v.lang.startsWith(lang));
+  if(v) u.voice=v;
+  if(speechSynthesis.pending) speechSynthesis.cancel(); // fell behind: jump to newest
+  speechSynthesis.speak(u);
+}
+$('#voice').onclick=()=>{ voice=!voice; $('#voice').classList.toggle('on',voice); $('#voice').setAttribute('aria-pressed',String(voice));
+  if(!voice) return stopVoice();
+  if(natural()){ AQ=[]; playing=true; player.src=`/tts/hello/${lang}.mp3`; player.playbackRate=1;  // played inside the tap: unlocks audio
+    player.play().catch(()=>{ playing=false; }); }
+  else speak(tt('on')); };
+$('#langBtn').onclick=()=>{ $('#live').style.display='none'; $('#pick').style.display='flex'; window.scrollTo(0,0); };
+$('#plus').onclick=()=>size(3); $('#minus').onclick=()=>size(-3);
+$('#aa').onclick=e=>{ e.stopPropagation(); const sh=$('#sheet'), open=sh.hidden; sh.hidden=!open; $('#aa').setAttribute('aria-expanded',String(open)); };
+document.addEventListener('click',e=>{ if(!$('#sheet').hidden&&!e.target.closest('#sheet')){ $('#sheet').hidden=true; $('#aa').setAttribute('aria-expanded','false'); } });
+document.querySelectorAll('#paceSeg button').forEach(b=>b.onclick=()=>setPace(b.dataset.p,true));
+setPace(curPace());
+function size(d){ fs=Math.max(18,Math.min(48,fs+d)); store.set('fs',fs); document.documentElement.style.setProperty('--fs',fs+'px'); }
+connect();
+const saved=store.get('lang'); if(saved && LC[saved]) start(saved);
+</script></body></html>

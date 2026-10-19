@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Set up LiveTranslate</title>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<style>
+/* Same system as the Control page (see /.impeccable.md): tinted near-black, colour only for state. */
+:root{--h:262;
+  --bg:oklch(0.150 0.006 var(--h));--surface:oklch(0.178 0.006 var(--h));--raise:oklch(0.212 0.007 var(--h));--sunk:oklch(0.128 0.005 var(--h));
+  --line:oklch(0.255 0.007 var(--h));--line2:oklch(0.320 0.008 var(--h));
+  --text:oklch(0.935 0.004 var(--h));--muted:oklch(0.690 0.008 var(--h));--faint:oklch(0.600 0.008 var(--h));--sel:oklch(0.935 0.004 var(--h) / .07);
+  --ok:oklch(0.740 0.120 155);--warn:oklch(0.800 0.110 80);--bad:oklch(0.680 0.150 25);--ease:cubic-bezier(.25,1,.5,1);
+  --sans:"Geist",-apple-system,system-ui,sans-serif;--legend:"Archivo","Arial Narrow",sans-serif;--mono:"Geist Mono",Menlo,monospace;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:400 14px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+:focus-visible{outline:1px solid var(--text);outline-offset:2px}
+main{max-width:760px;margin:0 auto;padding:64px 24px 96px}
+.legend{font:600 11px/1 var(--legend);font-stretch:72%;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+h1{font:600 30px/1.15 var(--sans);letter-spacing:-.025em;margin:12px 0 8px}
+.lede{color:var(--muted);margin:0 0 40px;max-width:60ch}
+h2{font:600 17px/1.3 var(--sans);letter-spacing:-.01em;margin:0 0 4px}
+.sub{color:var(--faint);font-size:13px;margin:0 0 16px}
+section{padding:28px 0;border-top:1px solid var(--line)}
+.checks{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.check{padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.check+.check{border-left:1px solid var(--line)}
+.check b{font-weight:500}
+.check .s{font:12px var(--mono);color:var(--faint)}
+.check.bad b{color:var(--bad)}.check.warn b{color:var(--warn)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips label{cursor:pointer}.chips input{position:absolute;opacity:0;pointer-events:none}
+.chips span{height:32px;display:inline-flex;align-items:center;padding:0 12px;border:1px solid var(--line);border-radius:4px;color:var(--faint);font-size:13px;transition:all .15s var(--ease)}
+.chips label:hover span{color:var(--muted);border-color:var(--line2)}
+.chips input:checked+span{border-color:var(--muted);background:var(--sel);color:var(--text)}
+.chips input:disabled+span{border-style:dashed;cursor:default}
+.chips input:focus-visible+span{outline:1px solid var(--text);outline-offset:2px}
+.rows{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.opt{position:relative;background:none;border:0;padding:14px 16px 14px 42px;text-align:left;cursor:pointer;transition:background .15s var(--ease)}
+.opt+.opt{border-left:1px solid var(--line)}
+.opt::before{content:"";position:absolute;left:16px;top:18px;width:12px;height:12px;border-radius:50%;border:1px solid var(--line2)}
+.opt:hover{background:var(--raise)}
+.opt b{display:block;font-weight:500;color:var(--muted)}
+.opt span{display:block;color:var(--faint);font-size:12.5px;line-height:1.45;margin-top:2px}
+.opt .m{font:12px var(--mono);color:var(--faint);margin-top:8px}
+.opt[aria-pressed=true]{background:var(--sel)}.opt[aria-pressed=true] b{color:var(--text)}
+.opt[aria-pressed=true]::before{border-color:var(--text);background:var(--text);box-shadow:inset 0 0 0 3px var(--surface)}
+.opt .rec{display:inline-block;font:600 10px/1 var(--legend);font-stretch:72%;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);border:1px solid var(--line2);border-radius:3px;padding:2px 4px;margin-left:6px;vertical-align:1px}
+.pw{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:520px}
+.pw input{height:40px;background:var(--sunk);border:1px solid var(--line);border-radius:5px;padding:0 12px;font:inherit;color:inherit}
+.pw input:focus{outline:none;border-color:var(--muted)}
+.toggle{display:flex;align-items:center;gap:12px;cursor:pointer}
+.toggle input{accent-color:var(--text);width:16px;height:16px}
+.bar{display:flex;align-items:center;gap:16px;margin-top:8px;padding-top:28px;border-top:1px solid var(--line)}
+.btn{height:40px;padding:0 20px;border-radius:5px;border:1px solid var(--line2);background:var(--raise);cursor:pointer;font-weight:500}
+.btn.pri{background:var(--text);border-color:var(--text);color:var(--bg)}.btn:disabled{opacity:.4;cursor:not-allowed}
+.est{color:var(--muted);font-size:13px}.est b{font:500 13px var(--mono);color:var(--text)}
+.msg{margin-top:16px;padding:12px 14px;border:1px solid var(--line);border-radius:6px;font-size:13px}
+.msg.err{border-color:oklch(0.680 0.150 25 / .5);color:var(--bad)}.msg:empty{display:none}
+#prog{display:none}
+.step{display:grid;grid-template-columns:22px 1fr;gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}
+.dot{width:12px;height:12px;border-radius:50%;border:1px solid var(--line2);margin-top:5px}
+.step.active .dot{border-color:var(--text);animation:pulse 1.2s var(--ease) infinite}
+.step.done .dot{background:var(--ok);border-color:var(--ok)}.step.failed .dot{background:var(--bad);border-color:var(--bad)}
+@keyframes pulse{50%{opacity:.35}}
+.step b{font-weight:500}.step.waiting b{color:var(--faint)}
+.step .d{font:12px var(--mono);color:var(--faint);margin-top:2px;word-break:break-all}
+.track{height:3px;background:var(--sunk);margin-top:8px;overflow:hidden;border-radius:2px}.track i{display:block;height:100%;background:var(--text);width:0;transition:width .4s var(--ease)}
+pre{font:11.5px/1.5 var(--mono);color:var(--faint);background:var(--sunk);border:1px solid var(--line);border-radius:6px;padding:12px;max-height:180px;overflow:auto;white-space:pre-wrap}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media(max-width:640px){.checks,.rows{grid-template-columns:1fr 1fr}.rows{grid-template-columns:1fr}.opt+.opt{border-left:0;border-top:1px solid var(--line)}}
+#ai{grid-template-columns:repeat(2,1fr)}#ai .opt{border-top:1px solid var(--line)}#ai .opt:nth-child(-n+2){border-top:0}#ai .opt:nth-child(odd){border-left:0}
+.opt .fit{margin-top:6px;font-size:12px;color:var(--muted)}.opt .fit b{display:inline;color:var(--text);font-weight:600}.opt .fit.warn b{color:#d9a400}.opt .fit.bad b{color:#e5484d}
+</style></head><body><main>
+<p class="legend">LiveTranslate</p>
+<h1 id="title">Set up this machine</h1>
+<p class="lede" id="lede">Everything is downloaded once and stored on this <span class="here">computer</span>. After setup, LiveTranslate runs completely offline — no internet, no cloud.</p>
+
+<div id="form">
+  <section>
+    <h2>This <span class="here">computer</span></h2><p class="sub">Checked automatically.</p>
+    <div class="checks" id="checks"></div>
+  </section>
+  <section>
+    <h2>Languages</h2><p class="sub">Spoken and shown. You can add more later from the <span class="tray">tray icon</span>.</p>
+    <div class="chips" id="langs"></div>
+  </section>
+  <section>
+    <h2>Local AI</h2><p class="sub">Understands the event description for more faithful translation. Runs on this <span class="here">computer</span> only.</p>
+    <div class="rows" id="ai"></div>
+  </section>
+  <section id="pwSec">
+    <h2>Admin password</h2><p class="sub">Needed to open Control from other devices (laptop, iPad). On this <span class="here">computer</span> itself Control opens without it. At least 8 characters.</p>
+    <div class="pw"><input type="password" id="pw1" placeholder="Admin password" autocomplete="new-password"><input type="password" id="pw2" placeholder="Repeat it" autocomplete="new-password"></div>
+  </section>
+  <section>
+    <label class="toggle"><input type="checkbox" id="voice" checked><span>Natural voice for listeners<br><span class="sub" style="margin:0" id="voiceSub">Phones that tap Listen hear a natural neural voice instead of the phone's robotic one. English, French, Spanish, Italian, Portuguese.</span></span></label>
+  </section>
+  <section>
+    <label class="toggle"><input type="checkbox" id="login" checked><span>Open LiveTranslate when this <span class="here">computer</span> starts<br><span class="sub" style="margin:0">It opens and waits — an operator starts the session from Control.</span></span></label>
+  </section>
+  <div class="bar"><button class="btn pri" id="go">Install</button><span class="est" id="est"></span></div>
+  <div class="msg err" id="formMsg"></div>
+</div>
+
+<div id="prog">
+  <div id="steps"></div>
+  <div class="msg err" id="err"></div>
+  <div class="bar" id="doneBar" style="display:none"><button class="btn pri" id="open">Open LiveTranslate</button><span class="est">Control opens in your browser. Turn off Wi-Fi if you like: it no longer needs it.</span></div>
+  <div class="bar" id="retryBar" style="display:none"><button class="btn" id="retry">Try again</button><span class="est">Completed steps are kept.</span></div>
+  <details style="margin-top:20px"><summary class="sub" style="cursor:pointer">Details</summary><pre id="log"></pre></details>
+</div>
+</main>
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json());
+let C, ai='none', MAC=true;
+const AIROWS={none:['Offline only','Fast translation without AI. Does not use the event description.','no download'],
+  balanced:['Balanced','Understands the event description. Right for live subtitles.',''],
+  accurate:['Most accurate','Google’s translation-tuned Gemma: best wording and jargon. Slower.',''],
+  maximum:['Maximum','The largest translation model, for a dedicated machine with lots of memory.','']};
+// what THIS machine can run (models.py): shown on every AI option so nobody installs a model that starves the show
+const FIT={good:['Runs well',''],slow:['Runs, slower','warn'],tight:['Tight on memory','warn'],no:['Too big for this machine','bad']};
+function sel(){ return {langs:$$('#langs input:checked').map(i=>i.value), ai, login:$('#login').checked, password:$('#pw1').value, voice:$('#voice').checked}; }
+function pwProblem(){ if(C.has_password&&!$('#pw1').value) return '';  // re-running setup: keep the existing one
+  const a=$('#pw1').value, b=$('#pw2').value;
+  return a.length<8?'Choose an admin password of at least 8 characters.':a!==b?'The two passwords are different.':''; }
+async function estimate(){ const {gb}=await post('/api/estimate',sel()); const free=C.free_gb;
+  $('#est').innerHTML=gb?`Downloads about <b>${gb} GB</b> · ${free} GB free`:'Everything selected is already installed';
+  const short=gb+2>free; $('#go').disabled=short||!C.supported||(!C.online&&gb>0);
+  $('#formMsg').textContent=!C.supported?(MAC?'LiveTranslate needs a Mac with Apple Silicon (M1 or later).':'LiveTranslate needs a 64-bit Intel or AMD processor.')
+    :short?`Not enough free disk space: free at least ${(gb+2-free).toFixed(1)} GB more, or choose a smaller AI option.`
+    :(!C.online&&gb>0)?'Setup needs an internet connection once to download the models. Connect, then reload this page.':''; }
+function draw(){
+  const g=C.gpu, here=MAC?'Mac':'computer';
+  const ck=[MAC?['Apple Silicon',C.supported?'Yes':'Required',C.supported?'':'bad',C.os]
+             :['Graphics',g?g.name.replace(/^NVIDIA (GeForce )?/,''):'No NVIDIA card',g?'':'warn',
+               g?`${g.vram_gb} GB · fast, most accurate speech`:'runs on the CPU · smaller speech model'],
+    ['Memory',`${C.ram_gb} GB`,C.ram_gb<16?'warn':'',C.ram_gb<16?'local AI not recommended':'enough for local AI'],
+    ['Free disk',`${C.free_gb} GB`,C.free_gb<8?'warn':'',`models stay on this ${here} · ${C.os}`],
+    ['NDI output',C.ndi?'Ready':'Optional',C.ndi?'':'warn',C.ndi?'runtime found':'<a href="https://ndi.video/tools/" target="_blank" style="color:inherit">install NDI Tools</a>']];
+  $('#checks').innerHTML=ck.map(([k,v,c,s])=>`<div class="check ${c}"><span class="legend">${k}</span><b>${v}</b><span class="s">${s}</span></div>`).join('');
+  const have=new Set(C.installed.langs||[]), pre=have.size?have:new Set(['en','fr','es']);
+  $('#langs').innerHTML=Object.entries(C.langs).map(([k,n])=>`<label><input type="checkbox" value="${k}" ${pre.has(k)||k==='en'?'checked':''} ${k==='en'?'disabled':''}><span>${n}</span></label>`).join('');
+  ai=C.installed.ai||C.recommend_ai;
+  $('#ai').innerHTML=Object.entries(AIROWS).map(([k,[n,d,m]])=>`<button class="opt" data-k="${k}" aria-pressed="${k===ai}"><b>${n}${k===C.recommend_ai?'<span class="rec">Recommended</span>':''}</b><span>${d}</span><div class="m">${m||C.ai[k].model+' · '+C.ai[k].gb+' GB'}</div>${C.fit?.[k]?`<div class="fit ${FIT[C.fit[k].level][1]}"><b>${FIT[C.fit[k].level][0]}:</b> ${C.fit[k].why}</div>`:''}</button>`).join('');
+  $$('#ai .opt').forEach(b=>b.onclick=()=>{ ai=b.dataset.k; $$('#ai .opt').forEach(x=>x.setAttribute('aria-pressed',x===b)); estimate(); });
+  $$('#langs input').forEach(i=>i.onchange=estimate); $('#voice').onchange=estimate;
+  if(C.installed.voice){ $('#voice').checked=true; $('#voice').disabled=true; $('#voiceSub').textContent='Installed.'; }
+  $('#login').checked=C.installed.version?C.login:true;
+  if(C.has_password) $('#pwSec .sub').textContent='Already set. Leave empty to keep it, or type a new one to replace it.';
+  if(C.installed.version){ $('#title').textContent='Add languages or local AI'; $('#lede').textContent='Already installed items are kept; only what is missing is downloaded.'; }
+  estimate(); }
+async function poll(){ const p=await fetch('/api/progress').then(r=>r.json());
+  $('#steps').innerHTML=p.steps.map(s=>`<div class="step ${s.status}"><span class="dot"></span><div><b>${s.label}</b>${s.detail?`<div class="d">${s.detail.replace(/[<&]/g,c=>({'<':'&lt;','&':'&amp;'}[c]))}</div>`:''}${s.pct!=null&&s.status==='active'?`<div class="track"><i style="width:${s.pct}%"></i></div>`:''}</div></div>`).join('');
+  $('#log').textContent=p.log.join('\n'); $('#err').textContent=p.error?`Setup stopped: ${p.error}`:'';
+  $('#doneBar').style.display=p.done?'':'none'; $('#retryBar').style.display=p.error&&!p.running?'':'none';
+  if(p.done){ $('#title').textContent='LiveTranslate is ready'; $('#lede').textContent='Installed and tested offline.'; }
+  if(p.running||(!p.done&&!p.error)) setTimeout(poll,600); }
+$('#go').onclick=async()=>{ const pe=pwProblem(); if(pe){ $('#formMsg').textContent=pe; $('#pw1').focus(); return; } $('#form').style.display='none'; $('#prog').style.display='block'; $('#title').textContent='Installing'; $('#lede').textContent='Keep this page open. Large downloads can take a while; completed steps are kept if anything stops.';
+  await post('/api/install',sel()); poll(); };
+$('#retry').onclick=()=>$('#go').onclick();
+$('#open').onclick=async()=>{ await post('/api/launch',{}); $('#lede').textContent='Opening LiveTranslate… you can close this page.'; };
+(async()=>{ C=await fetch('/api/check').then(r=>r.json()); MAC=C.platform==='mac';
+  $$('.here').forEach(e=>e.textContent=MAC?'Mac':'computer'); $$('.tray').forEach(e=>e.textContent=MAC?'menu bar':'tray icon');
+  draw(); })();
+</script></body></html>

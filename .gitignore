@@ -1,0 +1,10 @@
+.venv/
+dist/
+config.json
+sessions/
+transcripts/
+caption_presets.json
+__pycache__/
+.DS_Store
+.cache/
+*.log
