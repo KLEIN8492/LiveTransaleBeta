@@ -222,7 +222,8 @@ input.sug{color:var(--muted);font-style:italic}  /* glossary suggestion, not che
         <h2>Event</h2>
         <p class="lede">The event type sets timing that suits how people speak there. Everything stays adjustable in Fine-tuning.</p>
         <div class="types" id="types"></div>
-        <div class="f"><label for="s_name">Session name</label><input type="text" id="s_name" placeholder="e.g. Energy Summit — Day 1 keynote"></div>
+        <div class="f"><label for="s_name">Session name</label><input type="text" id="s_name" placeholder="e.g. Energy Summit — Day 1 keynote">
+          <div class="hint" id="asNewHint">Renaming keeps this saved setup. <a href="#" id="asNew">Save as a new setup instead</a></div></div>
         <div class="f"><label for="s_context">Describe the event</label><textarea id="s_context"></textarea><div class="hint" id="ctxHint"></div></div>
         <div class="f"><label for="s_names">Names and special words</label><textarea id="s_names" style="min-height:60px" placeholder="Speakers, venues, brands, product names — e.g. Siobhán Ní Dhuibhir, Nyxtera, Rivage PM10"></textarea>
           <div class="hint">Recognised with the right spelling and never translated, whichever quality you choose.</div></div>
@@ -402,6 +403,7 @@ $$('nav button').forEach(b=>b.onclick=()=>{ $$('nav button').forEach(x=>x.classL
 /* ---------- session form */
 function langOpts(sel,incEmpty){ return (incEmpty?'<option value="">— none —</option>':'')+Object.entries(INFO.langs).map(([k,v])=>`<option value="${k}" ${k===sel?'selected':''}>${v[0]} (${k})</option>`).join(''); }
 function fillForm(s){
+  curId=s.id||null; asNew=false; drawAsNew();
   $('#s_name').value=s.name; $('#s_context').value=s.context; $('#s_names').value=s.names;
   $('#s_lang1').innerHTML=langOpts(s.source==='auto'?(s.targets[0]||'en'):s.source);
   $('#s_source').value=s.source; prevSrc=s.source;
@@ -495,13 +497,17 @@ function drawVFields(f){ const ls=formLangs();
   $('#v_fields').innerHTML=ls.map(l=>`<div class="f"><label>Title field for ${INFO.langs[l][0]}</label><input type="text" data-vl="${l}" value="${esc(f[l]||'')}" placeholder="e.g. Headline.Text — leave empty to skip"></div>`).join(''); }
 function readForm(){
   syncGloss(); const vf={}; $$('[data-vl]').forEach(i=>{ if(i.value.trim()) vf[i.dataset.vl]=i.value.trim(); });
-  return {name:$('#s_name').value.trim()||'Session',event_type:eventType,context:$('#s_context').value,names:$('#s_names').value,glossary:glossary.filter(g=>Object.values(g).some(v=>v)),
+  return {...(curId&&!asNew?{id:curId}:{}),...(asNew?{new_setup:true}:{}),name:$('#s_name').value.trim()||'Session',event_type:eventType,context:$('#s_context').value,names:$('#s_names').value,glossary:glossary.filter(g=>Object.values(g).some(v=>v)),
     source:$('#s_source').value,targets:targets(),engine:$('#s_engine').value,whisper:$('#s_whisper').value,device:$('#s_device').value,
     channel:+$('#s_channel').value||1,silence_ms:+$('#s_silence_ms').value||600,max_s:+$('#s_max_s').value||7,phone_pace:$('#s_phone_pace').value,voice_gender:$('#s_voice_gender').value,partial_s:$('#s_partial_s').value===''?0.6:+$('#s_partial_s').value,gate_db:+$('#s_gate_db').value||-60,gain_db:+$('#s_gain_db').value||0,
     vmix:{host:$('#v_host').value.trim(),input:$('#v_input').value.trim(),fields:vf,clear:$('#v_clear').value===''?6:Math.max(0,+$('#v_clear').value)},bleep:$('#s_bleep').checked,bleep_extra:$('#s_bleep_extra').value,wifi_ssid:$('#s_wifi_ssid').value,
     ...($('#s_wifi_pass').value?{wifi_pass:$('#s_wifi_pass').value}:wifiClear?{wifi_pass:''}:{})};
 }
-let prevSrc=null, wifiClear=false;
+let prevSrc=null, wifiClear=false, curId=null, asNew=false;
+// saved setups have a stable id: renaming updates the setup; "save as a new setup" makes a copy with a new id
+function drawAsNew(){ $('#asNewHint').innerHTML=asNew?'Will be saved as a new setup. <a href="#" id="asNew">Keep updating the one I opened</a>'
+    :'Renaming keeps this saved setup. <a href="#" id="asNew">Save as a new setup instead</a>';
+  $('#asNew').onclick=e=>{ e.preventDefault(); asNew=!asNew; drawAsNew(); }; }
 function setSource(v){ syncGloss(); $('#s_source').value=v; sourceChanged(); }
 $$('#spokenSeg button').forEach(b=>b.onclick=()=>setSource(b.dataset.m==='auto'?'auto':$('#s_lang1').value));
 $('#s_lang1').onchange=()=>setSource($('#s_lang1').value);
@@ -523,7 +529,10 @@ $('#applyBtn').onclick=async()=>{ try{ await api('update',readForm()); say(''); 
   catch(e){ say('Changes were not applied — the server did not answer. Check that LiveTranslate is running, then try again.'); $('#applyBtn').textContent='Not applied'; }
   setTimeout(()=>$('#applyBtn').textContent='Apply changes',1500); };
 $('#stopBtn').onclick=()=>{ if(confirm('Stop the session? Screens and phones stop receiving captions.')) api('stop',{}); };
-$('#refreshDev').onclick=async()=>{ devices=await api('devices'); fillForm(readForm()); };
+$('#refreshDev').onclick=async()=>{ devices=await api('devices');
+  const keep={asNew,wifiClear,pw:$('#s_wifi_pass').value};  // redraw the form without losing what was typed
+  fillForm({...readForm(),id:curId,wifi_pass_set:ST.session?.wifi_pass_set});
+  asNew=keep.asNew; wifiClear=keep.wifiClear; $('#s_wifi_pass').value=keep.pw; drawAsNew(); };
 async function loadSaved(){ const ss=await api('sessions'); $('#saved').innerHTML='<option value="">Open a saved setup…</option>'+ss.map((s,i)=>`<option value="${i}">${esc(s.name)}</option>`).join('');
   $('#saved').onchange=e=>{ if(e.target.value!=='') fillForm({...INFO.default,...ss[+e.target.value]}); }; }
 

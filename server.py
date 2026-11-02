@@ -170,16 +170,58 @@ def keep_secret(new, old):
     return new
 
 
+# Saved sessions are keyed by a stable id, not by their name: "Conférence!" and "conference" slug identically and
+# overwrote each other, and renaming left the old file behind. File: sessions/<id>-<slug>.json (slug only for humans).
+def _session_files(sid=None):
+    if not os.path.isdir(SESS_DIR):
+        return []
+    return [os.path.join(SESS_DIR, f) for f in os.listdir(SESS_DIR)
+            if f.endswith(".json") and (sid is None or f.startswith(sid + "-"))]
+
+
 def session_path(s):
-    return os.path.join(SESS_DIR, slug(s["name"]) + ".json")
+    return os.path.join(SESS_DIR, f"{s['id']}-{slug(s['name'])}.json")
 
 
 def saved_session(s):
-    return read_json(session_path(s), {})
+    """The stored copy of `s` (by id), or {}."""
+    files = _session_files(s.get("id")) if s.get("id") else []
+    return read_json(files[0], {}) if files else {}
+
+
+def ensure_id(s):
+    """New setups get an id; `new_setup` (Control: "save as a new setup") forces one. A client that sends no id (curl,
+    the tests, older Control pages) keeps the old by-name behaviour: it reuses the id of the saved setup of that name."""
+    s = dict(s)
+    if s.pop("new_setup", False):
+        s.pop("id", None)
+    if not s.get("id"):
+        same = [x for x in map(lambda p: read_json(p, {}), _session_files()) if slug(x.get("name", "")) == slug(s.get("name", ""))]
+        s["id"] = (same[0].get("id") if same else None) or secrets.token_hex(4)
+    s["id"] = re.sub(r"[^a-f0-9]", "", str(s["id"]).lower())[:16] or secrets.token_hex(4)
+    return s
 
 
 def save_session(s):
-    write_json(session_path(s), s)
+    if not s.get("id"):  # in place: the live session dict keeps the id for its next save
+        s["id"] = ensure_id(s)["id"]
+    path = session_path(s)
+    write_json(path, s)
+    for old in _session_files(s["id"]):  # renamed: the file under the old name goes, its content lives on in `path`
+        if old != path:
+            os.remove(old)
+
+
+def migrate_sessions():
+    """Files from before ids (<slug>.json): give each an id and move it to <id>-<slug>.json, once, at startup."""
+    for path in _session_files():
+        s = read_json(path, None)
+        if isinstance(s, dict) and s.get("name") and not s.get("id"):
+            s["id"] = secrets.token_hex(4)
+            save_session(s)
+            if os.path.exists(path) and path != session_path(s):
+                os.remove(path)
+            log(f"[session] {os.path.basename(path)} → {os.path.basename(session_path(s))}")
 
 
 # ======================================================================= translation
@@ -1144,7 +1186,8 @@ class Hub:
     def start(self, s):
         with self.lock:
             self._stop_capture()
-            same = s.get("name") == self.s.get("name")
+            s = ensure_id(s)
+            same = s["id"] == self.s.get("id")
             self.s = {**DEFAULT, **keep_secret(s, self.s if same else saved_session(s))}
             self.running, self.loading, self.error, self.paused = False, True, "", False
             self.push_state()
@@ -2303,6 +2346,7 @@ def main():
         sys.exit(f"--password: use at least {Auth.MIN_LEN} characters")
     conf = load_conf(args)
     tighten_permissions()
+    migrate_sessions()
     want = args.port or int(os.environ.get("LT_PORT") or 0) or int(conf.get("port") or 0) or DEFAULT_PORT
     args.port = free_port(want)
     args.port_note = "" if args.port == want else (

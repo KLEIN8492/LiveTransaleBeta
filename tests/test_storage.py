@@ -38,5 +38,29 @@ check("redact() drops the Wi-Fi password, keeps whether it is set", "wifi_pass" 
 check("keep_secret(): absent → keep the stored one", S.keep_secret({"name": "Gala"}, {"wifi_pass": "pw"})["wifi_pass"] == "pw")
 check("keep_secret(): '' → removed", S.keep_secret({"wifi_pass": ""}, {"wifi_pass": "pw"})["wifi_pass"] == "")
 
+# --- Issue 4: saved sessions keyed by a stable id
+for f in S._session_files():
+    os.remove(f)
+a = S.ensure_id({**S.DEFAULT, "name": "Conférence!", "glossary": [{"src": "court métrage", "en": "short film"}]})
+b = S.ensure_id({**S.DEFAULT, "name": "conference"})
+S.save_session(a); S.save_session(b)
+check("'Conférence!' and 'conference' (same slug) are two saved setups",
+      a["id"] != b["id"] and len(S._session_files()) == 2)
+S.save_session({**a, "name": "Gala du festival"})
+mine = S._session_files(a["id"])
+kept = S.read_json(mine[0], {}) if mine else {}
+check("renaming keeps ONE file for that setup, with its content",
+      len(mine) == 1 and kept.get("name") == "Gala du festival" and kept.get("glossary") == a["glossary"]
+      and len(S._session_files()) == 2)
+check("a client without an id (curl, tests) reuses the setup of that name",
+      S.ensure_id({"name": "Gala du festival"})["id"] == a["id"])
+check("'save as a new setup' gets a new id", S.ensure_id({**a, "new_setup": True})["id"] != a["id"])
+check("ids can't escape the sessions folder", S.ensure_id({"name": "x", "id": "../../etc/passwd"})["id"].isalnum())
+S.write_json(os.path.join(S.SESS_DIR, "old-show.json"), {**S.DEFAULT, "name": "Old show"})
+S.migrate_sessions()
+old = [S.read_json(p, {}) for p in S._session_files() if "old-show" in p]
+check("pre-id files are migrated to <id>-<slug>.json once",
+      not os.path.exists(os.path.join(S.SESS_DIR, "old-show.json")) and len(old) == 1 and old[0].get("id"))
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
