@@ -5,7 +5,7 @@ Audio in -> VAD -> Whisper (MLX) -> Argos or local LLM (Ollama) -> network outpu
   /control  operator console (PIN)      /overlay  vMix / OBS browser-source captions
   /         audience phones (QR)        /card     printable QR card
 """
-import argparse, asyncio, collections, difflib, hashlib, hmac, html, json, os, queue, re, secrets, signal, socket, subprocess, sys, threading, time
+import argparse, asyncio, collections, difflib, hashlib, hmac, html, ipaddress, json, os, queue, re, secrets, signal, socket, subprocess, sys, threading, time
 import urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -142,18 +142,126 @@ def read_json(path, default):
         return default
 
 
+def private_dir(d):
+    """Every folder LiveTranslate creates is owner-only (0700): sessions hold the Wi-Fi password, transcripts what
+    was said. Whoever creates one first — Control listing saved setups, a save, a transcript — gets the same mode."""
+    os.makedirs(d, mode=0o700, exist_ok=True)
+
+
 def write_json(path, obj):
     """Atomic: write a temp file, then rename over the old one — a crash or power cut mid-write leaves the
     previous version intact instead of a half-written file."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    private_dir(os.path.dirname(path))
     tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    # created owner-only (0600) from the first byte: sessions hold the venue Wi-Fi password
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
 
 
+def redact(s):
+    """A session as it leaves over the network: the Wi-Fi password stays on this machine (it is only printed on the
+    QR card, which is admin-only) — Control learns whether one is set, never its value."""
+    out = {k: v for k, v in s.items() if k != "wifi_pass"}
+    out["wifi_pass_set"] = bool(s.get("wifi_pass"))
+    return out
+
+
+def keep_secret(new, old):
+    """Control treats the Wi-Fi password as write-only: it sends `wifi_pass` only when the operator typed a new one
+    (or "" to remove it). Absent → keep the stored one."""
+    if "wifi_pass" not in new:
+        new = {**new, "wifi_pass": (old or {}).get("wifi_pass", "")}
+    new.pop("wifi_pass_set", None)
+    return new
+
+
+# Saved sessions are keyed by a stable id, not by their name: "Conférence!" and "conference" slug identically and
+# overwrote each other, and renaming left the old file behind. File: sessions/<id>-<slug>.json (slug only for humans).
+def _session_files(sid=None):
+    if not os.path.isdir(SESS_DIR):
+        return []
+    return [os.path.join(SESS_DIR, f) for f in os.listdir(SESS_DIR)
+            if f.endswith(".json") and (sid is None or f.startswith(sid + "-"))]
+
+
+def session_path(s):
+    return os.path.join(SESS_DIR, f"{s['id']}-{slug(s['name'])}.json")
+
+
+def saved_session(s):
+    """The stored copy of `s` (by id), or {}."""
+    files = _session_files(s.get("id")) if s.get("id") else []
+    return read_json(files[0], {}) if files else {}
+
+
+def ensure_id(s):
+    """New setups get an id; `new_setup` (Control: "save as a new setup") forces one. A client that sends no id (curl,
+    the tests, older Control pages) keeps the old by-name behaviour: it reuses the id of the saved setup of that name."""
+    s = dict(s)
+    if s.pop("new_setup", False):
+        s.pop("id", None)
+    if not s.get("id"):
+        same = [x for x in map(lambda p: read_json(p, {}), _session_files()) if slug(x.get("name", "")) == slug(s.get("name", ""))]
+        s["id"] = (same[0].get("id") if same else None) or secrets.token_hex(4)
+    s["id"] = re.sub(r"[^a-f0-9]", "", str(s["id"]).lower())[:16] or secrets.token_hex(4)
+    return s
+
+
 def save_session(s):
-    write_json(os.path.join(SESS_DIR, slug(s["name"]) + ".json"), s)
+    if not s.get("id"):  # in place: the live session dict keeps the id for its next save
+        s["id"] = ensure_id(s)["id"]
+    path = session_path(s)
+    write_json(path, s)
+    for old in _session_files(s["id"]):  # renamed: the file under the old name goes, its content lives on in `path`
+        if old != path:
+            os.remove(old)
+
+
+def sweep_tmp():
+    """write_json/save_conf leave <file>.<pid>.<thread>.tmp behind if the process dies mid-write (power cut, kill -9).
+    Swept at startup — except files of another LiveTranslate that is still running and may be writing right now."""
+    for d in (DATA, SESS_DIR):
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            if not f.endswith(".tmp"):
+                continue
+            m = re.search(r"\.(\d+)\.\d+\.tmp$", f)
+            if m and int(m.group(1)) != os.getpid():
+                try:
+                    os.kill(int(m.group(1)), 0)
+                    continue  # that process is alive
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+            try:
+                os.remove(os.path.join(d, f))
+            except OSError:
+                pass
+
+
+def list_sessions():
+    """Saved setups for Control's "Open a saved setup…", as they may leave over the network (redacted)."""
+    private_dir(SESS_DIR)
+    out = []
+    for fn in sorted(os.listdir(SESS_DIR)):
+        if fn.endswith(".json"):  # one corrupt file must not hide every saved setup
+            s = read_json(os.path.join(SESS_DIR, fn), None)
+            if isinstance(s, dict) and s.get("name"):
+                out.append(redact(s))
+    return out
+
+
+def migrate_sessions():
+    """Files from before ids (<slug>.json): give each an id and move it to <id>-<slug>.json, once, at startup."""
+    for path in _session_files():
+        s = read_json(path, None)
+        if isinstance(s, dict) and s.get("name") and not s.get("id"):
+            s["id"] = secrets.token_hex(4)
+            save_session(s)
+            if os.path.exists(path) and path != session_path(s):
+                os.remove(path)
+            log(f"[session] {os.path.basename(path)} → {os.path.basename(session_path(s))}")
 
 
 # ======================================================================= translation
@@ -239,7 +347,13 @@ def mlx_repo(name):
 
 
 class MlxRuntime:
-    """mlx_srv.py child process, started on first use, shared by every session; dies with the server."""
+    """mlx_srv.py child process, started on first use, shared by every session; dies with the server.
+
+    Invariant (all under `lock`): `proc`/`port` describe the CURRENT runtime or are None/0 — then the next url()
+    starts one. A request that fails reports the url it USED (restart(url)): only that runtime is killed. Without
+    that, the French and Spanish threads both failing against an old runtime could kill the fresh one a third thread
+    had just started, and the 20 s circuit breaker would keep tripping — the "every AI request refused, silently
+    Argos" state seen at the 2026-10-11 rehearsal."""
     lock, proc, port = threading.Lock(), None, 0
 
     @classmethod
@@ -259,9 +373,10 @@ class MlxRuntime:
                             break
                         time.sleep(0.2)
                 else:
-                    log(f"[llm] MLX runtime did not answer on :{cls.port} — restarting it on the next line")
-                    cls.restart()
-        return f"http://127.0.0.1:{cls.port}"
+                    port = cls.port
+                    cls._kill_locked()  # NOT restart(): that takes the lock we hold (deadlock)
+                    raise RuntimeError(f"MLX runtime did not answer on :{port} — a new one starts with the next line")
+            return f"http://127.0.0.1:{cls.port}"
 
     @staticmethod
     def _free_port():
@@ -270,15 +385,30 @@ class MlxRuntime:
             return so.getsockname()[1]
 
     @classmethod
-    def restart(cls):
-        """Called when the runtime refuses connections: alive but deaf is worse than dead (never restarted)."""
+    def _kill_locked(cls):
         if cls.proc and cls.proc.poll() is None:
             cls.proc.kill()
+            try:
+                cls.proc.wait(2)  # reaped: no zombie, and its port is free again
+            except Exception:
+                pass
+        cls.proc, cls.port = None, 0
+
+    @classmethod
+    def restart(cls, used_url):
+        """A request to `used_url` was refused: alive but deaf is worse than dead. Kills that runtime only if it is
+        still the current one; the next url() starts a new one."""
+        with cls.lock:
+            if cls.proc is not None and used_url == f"http://127.0.0.1:{cls.port}":
+                log(f"[llm] MLX runtime on :{cls.port} refused a request — restarting it")
+                cls._kill_locked()
 
     @classmethod
     def stop(cls):
-        if cls.proc and cls.proc.poll() is None:
-            cls.proc.terminate()
+        with cls.lock:
+            if cls.proc and cls.proc.poll() is None:
+                cls.proc.terminate()
+            cls.proc, cls.port = None, 0
 
 
 class Translator:
@@ -371,10 +501,7 @@ class Translator:
             try:
                 if self.mlx:
                     body = json.dumps({"model": self.mlx, "temperature": 0, "max_tokens": 40, "messages": msgs}).encode()
-                    req = urllib.request.Request(MlxRuntime.url() + "/v1/chat/completions", body,
-                                                 {"Content-Type": "application/json"})
-                    with urllib.request.urlopen(req, timeout=60) as r:
-                        out = json.load(r)["choices"][0]["message"]["content"]
+                    out = self._mlx_post(body, 60)
                 else:
                     body = json.dumps({"model": eng[7:], "stream": False, "keep_alive": "60m", "think": False,
                                        "options": {"temperature": 0}, "messages": msgs}).encode()
@@ -391,10 +518,19 @@ class Translator:
         yield_to_stt()
         body = json.dumps({"model": self.mlx, "temperature": 0, "max_tokens": 300,
                            "messages": self._messages(text, frm, to, self.s.get("engine", ""))}).encode()
-        req = urllib.request.Request(MlxRuntime.url() + "/v1/chat/completions", body, {"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            out = json.load(r)["choices"][0]["message"]["content"]
-        return out.strip().strip('"“”«» ')
+        return self._mlx_post(body, timeout).strip().strip('"“”«» ')
+
+    @staticmethod
+    def _mlx_post(body, timeout):
+        url = MlxRuntime.url()  # this thread's runtime: on "refused", restart exactly this one (see MlxRuntime)
+        req = urllib.request.Request(url + "/v1/chat/completions", body, {"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.load(r)["choices"][0]["message"]["content"]
+        except Exception as e:
+            if "refused" in repr(e).lower():
+                MlxRuntime.restart(url)
+            raise
 
     def _ollama(self, model, text, frm, to, timeout=6):
         body = json.dumps({"model": model, "stream": False, "keep_alive": "60m", "think": False,
@@ -478,9 +614,7 @@ class Translator:
                 return self._ollama(eng[7:], text, frm, to)
             except Exception as e:
                 # circuit breaker: don't make every following line wait for a dead/hung LLM
-                self.llm_down_until = time.time() + 20
-                if self.mlx and "refused" in repr(e).lower():
-                    MlxRuntime.restart()
+                self.llm_down_until = time.time() + 20  # (a refused MLX runtime was already restarted in _mlx_post)
                 log(f"[llm] {e!r} -> Argos for the next 20 s")
         try:
             return self._argos(text, frm, to)
@@ -1084,7 +1218,7 @@ class Hub:
     def state(self):
         return {"type": "state", "running": self.running, "loading": self.loading,
                 "monitoring": bool(self.cap) and not self.running, "notice": self.notice,
-                "paused": self.paused, "error": self.error, "session": self.s, "demo": self.demo,
+                "paused": self.paused, "error": self.error, "session": redact(self.s), "demo": self.demo,
                 "stt_note": getattr(self.stt, "note", "") if self.running else "",
                 "port_note": getattr(self, "port_note", ""), "echo_note": self.echo_note,
                 "counts": {k: len(v) for k, v in self.clients.items()}}
@@ -1118,7 +1252,9 @@ class Hub:
     def start(self, s):
         with self.lock:
             self._stop_capture()
-            self.s = {**DEFAULT, **s}
+            s = ensure_id(s)
+            same = s["id"] == self.s.get("id")
+            self.s = {**DEFAULT, **keep_secret(s, self.s if same else saved_session(s))}
             self.running, self.loading, self.error, self.paused = False, True, "", False
             self.push_state()
             try:
@@ -1130,7 +1266,7 @@ class Hub:
                 if not self.demo:
                     log(f"[stt] loading {self.s['whisper']}…")
                     self.stt = make_stt(self.s)
-                os.makedirs(TRANS_DIR, exist_ok=True)
+                private_dir(TRANS_DIR)
                 self.transcript = os.path.join(
                     TRANS_DIR, f"{datetime.now():%Y-%m-%d_%H%M}_{slug(self.s['name'])}.txt")
                 self.history.clear()
@@ -1261,6 +1397,7 @@ class Hub:
         langs_changed = session_langs({**self.s, **{k: s[k] for k in ("source", "targets") if k in s}}) != session_langs(self.s)
         if "source" in s and s["source"] != self.s.get("source"):
             self.notice, self.mismatch = "", (None, 0)
+        s = keep_secret(s, self.s)
         for k in ("name", "context", "names", "glossary", "engine", "vmix", "wifi_ssid", "wifi_pass", "targets", "bleep", "bleep_extra", "source", "gain_db", "phone_pace", "voice_gender") + audio_keys:
             if k in s:
                 self.s[k] = s[k]
@@ -1657,21 +1794,43 @@ def free_port(want):
 
 def save_conf(conf):
     tmp = CONF_PATH + ".tmp"
-    with open(tmp, "w") as f:
+    # owner-only from creation (no window where it is world-readable): password hash and session secrets
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         json.dump(conf, f, indent=2)
-    os.chmod(tmp, 0o600)  # holds the password hash and the session secret
+    os.chmod(tmp, 0o600)  # an existing .tmp from a crash keeps its old mode through os.open
     os.replace(tmp, CONF_PATH)
+
+
+def tighten_permissions():
+    """Older versions wrote sessions/presets with the default umask (0644): readable by every user of the machine."""
+    if IS_WIN:
+        return
+    for d in (DATA, SESS_DIR, TRANS_DIR):
+        if os.path.isdir(d):
+            os.chmod(d, 0o700)
+    for path in [CONF_PATH] + ([os.path.join(SESS_DIR, f) for f in os.listdir(SESS_DIR)] if os.path.isdir(SESS_DIR) else []):
+        try:
+            if os.path.isfile(path) and os.stat(path).st_mode & 0o077:
+                os.chmod(path, 0o600)
+        except OSError:
+            pass
 
 
 class Auth:
     """Who may use Control and the API. The machine running LiveTranslate is trusted (localhost); every other device
     signs in with the admin password. Password: PBKDF2-SHA256, salted, never stored. Sessions: signed cookies valid
     30 days; changing the password or 'sign out all devices' rotates the secret and ends every session.
-    Brute force: 5 wrong attempts from a device locks it 30 s, doubling up to 15 min."""
+    Brute force: 5 wrong attempts lock the sender 30 s, doubling up to 15 min — but never this machine, and the
+    sender is a BROWSER that signed in before (known-device cookie) rather than an IP when there is one: at a venue the
+    whole audience Wi-Fi can reach us through one NAT address, and one curious guest must not lock the FOH laptop out
+    mid-show. A brand-new device caught in someone else's lock types the unlock code (log + Control on this machine)."""
     ITER, DAYS, COOKIE, MIN_LEN = 200_000, 30, "lt_admin", 8
+    DEV, DEV_DAYS = "lt_dev", 365  # known device: grants nothing, only its own failure counter
 
     def __init__(self, conf):
         self.conf, self.fails = conf, {}
+        conf.setdefault("dev_secret", secrets.token_hex(32))  # NOT rotated with the session secret
+        self.new_unlock_code()
         if conf.get("pin") and not conf.get("admin"):  # older versions: a 4-digit PIN keeps working until replaced
             salt = secrets.token_hex(16)
             conf["admin"] = {"salt": salt, "hash": self._hash(str(conf["pin"]), salt), "weak": True}
@@ -1695,6 +1854,14 @@ class Auth:
         self.conf["admin"] = {"salt": salt, "hash": self._hash(pw, salt), "changed": time.strftime("%Y-%m-%d %H:%M")}
         self.rotate()
 
+    def on_launch(self, resumed):
+        """Admin cookies end when LiveTranslate is started afresh (event machines restart all the time: a cookie
+        surviving that gains nothing and loses an easy way to revoke access). They survive the restarts the menu-bar /
+        tray app does by itself — after a crash or a port change, both with --autostart — so a remote operator isn't
+        signed out mid-show by crash recovery. That flow is why the 30-day lifetime stays."""
+        if not resumed:
+            self.rotate()
+
     def rotate(self):  # every existing session becomes invalid
         self.conf["secret"] = secrets.token_hex(32)
         save_conf(self.conf)
@@ -1712,27 +1879,120 @@ class Auth:
     def local(self, req):
         return req.remote in LOCAL
 
+    # ---- lockout
+    def _dev_sig(self, did):
+        return hmac.new(self.conf["dev_secret"].encode(), did.encode(), "sha256").hexdigest()[:32]
+
+    def device(self, req):
+        did, _, sig = (req.cookies.get(self.DEV) or "").partition(".")
+        return did if did and hmac.compare_digest(sig, self._dev_sig(did)) else None
+
+    def remember_device(self, req, resp):
+        if not self.device(req):
+            did = secrets.token_hex(12)
+            resp.set_cookie(self.DEV, f"{did}.{self._dev_sig(did)}", max_age=self.DEV_DAYS * 86400, httponly=True,
+                            samesite="Strict", path="/")
+
+    def key(self, req):
+        did = self.device(req)
+        return f"device {did[:6]}" if did else req.remote
+
+    def new_unlock_code(self):
+        self.unlock, self.unlock_misses = f"{secrets.randbelow(10 ** 4):04}-{secrets.randbelow(10 ** 4):04}", 0
+        log(f"[auth] unlock code for a locked-out device: {self.unlock} (also in Control → Access on this machine)")
+
+    def try_unlock(self, req, code):
+        """Clears the lock on this sender. 5 wrong codes → a new code (an 8-digit code can't be guessed in 5)."""
+        code = re.sub(r"\D", "", code or "")
+        if not code:
+            return False
+        if hmac.compare_digest(code, self.unlock.replace("-", "")):
+            self.fails.pop(self.key(req), None)
+            log(f"[auth] {self.key(req)} unlocked with the unlock code")
+            self.new_unlock_code()  # single use
+            return True
+        self.unlock_misses += 1
+        if self.unlock_misses >= 5:
+            self.new_unlock_code()
+        return False
+
+    def ok(self, req):
+        self.fails.pop(self.key(req), None)
+
     def authed(self, req):
         return self.local(req) or self.valid(req.cookies.get(self.COOKIE))
 
     def set_cookie(self, resp):
         resp.set_cookie(self.COOKIE, self.token(), max_age=self.DAYS * 86400, httponly=True, samesite="Strict", path="/")
 
-    def locked_for(self, ip):
-        n, until = self.fails.get(ip, (0, 0))
+    def locked_for(self, req):
+        if self.local(req):  # this machine is never locked out of itself
+            return 0
+        n, until = self.fails.get(self.key(req), (0, 0))
         return max(0, int(until - time.time()) + 1) if until > time.time() else 0
 
-    def failed(self, ip):
-        n = self.fails.get(ip, (0, 0))[0] + 1
+    def failed(self, req):
+        k = self.key(req)
+        if self.local(req):
+            log(f"[auth] wrong password on this machine (never locked)")
+            return 0
+        n = self.fails.get(k, (0, 0))[0] + 1
         wait = 0 if n < 5 else min(900, 30 * 2 ** (n - 5))
-        self.fails[ip] = (n, time.time() + wait)
-        log(f"[auth] wrong password from {ip} ({n})" + (f" — locked {wait} s" if wait else ""))
+        self.fails[k] = (n, time.time() + wait)
+        log(f"[auth] wrong password from {k} ({n})" + (f" — locked {wait} s; unlock code {self.unlock}" if wait else ""))
         return wait
+
+
+def host_ok(host, extra=()):
+    """DNS rebinding defence: a malicious site can point its own name at 127.0.0.1, and the browser then treats
+    our server as that site (Host: evil.example). Only addresses this machine is really reached by pass: any IP
+    literal (an attacker can't make a page's origin be our IP), localhost, this machine's own name (.local for
+    iPads via Bonjour), and names listed in LT_HOSTS (a venue DNS name)."""
+    name = (host or "").rsplit(":", 1)[0] if not (host or "").endswith("]") else host
+    name = name.strip("[]").lower().rstrip(".")
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        pass
+    return name in my_names() or name in {h.strip().lower() for h in extra if h.strip()}
+
+
+_NAMES = None
+
+
+def my_names():
+    """localhost + this machine's names: the system host name (e.g. macbook.home) and the Bonjour name iPads use
+    (scutil's LocalHostName + .local — on a Mac it differs from the host name)."""
+    global _NAMES
+    if _NAMES is None:
+        n = {"localhost", socket.gethostname().lower()}
+        if IS_MAC:
+            try:
+                n.add(subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True,
+                                     timeout=2).stdout.strip().lower())
+            except Exception:
+                pass
+        _NAMES = {v for x in n if x for v in (x, x.split(".")[0], x.split(".")[0] + ".local")}
+    return _NAMES
+
+
+def cross_site(req):
+    """A state change sent by ANOTHER website open in the operator's browser. Control is passwordless on this machine,
+    so without this check any page could POST to 127.0.0.1 (simple form posts need no CORS) or open the operator
+    WebSocket (WebSockets have no CORS at all). Browsers always send Origin on POST and WebSocket upgrades, and
+    Sec-Fetch-Site on top in current ones; non-browser clients (the menu-bar app, curl, tests) send neither."""
+    site = req.headers.get("Sec-Fetch-Site")
+    if site and site not in ("same-origin", "none"):  # "none" = typed in the address bar / bookmark
+        return True
+    origin = req.headers.get("Origin")
+    return origin is not None and origin != f"{req.scheme}://{req.host}"  # also refuses Origin: null (sandboxes)
 
 
 def make_app(hub, args, conf):
     base = f"http://{args.ip}:{args.port}"
     auth = Auth(conf)
+    auth.on_launch(bool(args.autostart))
     if args.password:
         auth.set_password(args.password)
     authed = auth.authed
@@ -1754,16 +2014,19 @@ def make_app(hub, args, conf):
         return page("control.html")
 
     async def login(req):
-        ip, err, wait = req.remote, "", auth.locked_for(req.remote)
+        err, wait = "", auth.locked_for(req)
+        data = await req.post() if req.method == "POST" else {}
+        if wait and auth.try_unlock(req, data.get("unlock", "")):
+            wait = 0
         if req.method == "POST" and not wait:
-            data = await req.post()
             if auth.check(data.get("password", "")):
-                auth.fails.pop(ip, None)
-                log(f"[auth] signed in from {ip}")
+                auth.ok(req)
+                log(f"[auth] signed in from {req.remote} ({auth.key(req)})")
                 r = web.HTTPFound("/control")
                 auth.set_cookie(r)
+                auth.remember_device(req, r)  # from now on this browser has its own lockout, not its IP's
                 raise r
-            wait = auth.failed(ip)
+            wait = auth.failed(req)
             err = "Wrong password."
         if wait:
             err = f"Too many attempts. Try again in {wait} s."
@@ -1774,7 +2037,7 @@ def make_app(hub, args, conf):
         with open(os.path.join(STATIC, "login.html"), encoding="utf-8") as f:
             page_ = f.read()
         page_ = page_.replace("{{ERROR}}", html.escape(err)).replace("{{FORM}}", "" if form else "hidden") \
-                     .replace("{{NOPW}}", "hidden" if form else "")
+                     .replace("{{NOPW}}", "hidden" if form else "").replace("{{UNLOCK}}", "" if wait else "hidden")
         return web.Response(content_type="text/html", text=page_, headers={"Cache-Control": "no-store"})
 
     async def logout(req):
@@ -1787,6 +2050,8 @@ def make_app(hub, args, conf):
         return qrcode.make(data, image_factory=qrcode.image.svg.SvgPathImage, border=2).to_string().decode()
 
     async def qr(req):
+        if req.match_info["kind"] == "wifi":
+            need_auth(req)  # the Wi-Fi password: only for the operator printing the card
         s = hub.s
         # Wi-Fi QR syntax: \ ; , : " must be backslash-escaped or phones join the wrong network / fail
         wq = lambda v: re.sub(r'([\\;,:"])', r"\\\1", str(v or ""))
@@ -1828,6 +2093,7 @@ def make_app(hub, args, conf):
         return web.Response(body=mp3, content_type="audio/mpeg", headers={"Cache-Control": "max-age=600"})
 
     async def card(req):
+        need_auth(req)  # shows the Wi-Fi password; the audience scans the PRINTED card, never loads this page
         with open(os.path.join(STATIC, "card.html"), encoding="utf-8") as f:
             page_html = f.read()
         s = hub.s
@@ -1844,7 +2110,8 @@ def make_app(hub, args, conf):
         need_auth(req, api=True)
         what = req.match_info["what"]
         if what == "state":  # polled by the menu-bar app
-            return web.json_response({**hub.state(), **auth.status(), "base": base})
+            return web.json_response({**hub.state(), **auth.status(), "base": base,
+                                      **({"unlock": auth.unlock} if auth.local(req) else {})})
         if what == "info":
             try:  # offline (Argos) language pairs installed on this machine — Control warns about gaps
                 import argostranslate.package as ap
@@ -1852,7 +2119,8 @@ def make_app(hub, args, conf):
             except Exception:
                 pairs = []
             return web.json_response({"base": base, "langs": LANGS, "whisper": list(WHISPER), "style": STYLE,
-                                      "default": DEFAULT, "auth": {**auth.status(), "local": auth.local(req)},
+                                      "default": DEFAULT, "auth": {**auth.status(), "local": auth.local(req),
+                                                               **({"unlock": auth.unlock} if auth.local(req) else {})},
                                       "argos_pairs": pairs, "voices": hub.voice.langs(), "platform": sys.platform,
                                       "fit": machine_fit()})
         if what == "devices":
@@ -1872,14 +2140,7 @@ def make_app(hub, args, conf):
             names += [n for n in MLX_MODELS if n not in names and mlx_repo(n)]
             return web.json_response(names)
         if what == "sessions":
-            os.makedirs(SESS_DIR, exist_ok=True)
-            out = []
-            for fn in sorted(os.listdir(SESS_DIR)):
-                if fn.endswith(".json"):  # one corrupt file must not hide every saved setup
-                    s = read_json(os.path.join(SESS_DIR, fn), None)
-                    if isinstance(s, dict) and s.get("name"):
-                        out.append(s)
-            return web.json_response(out)
+            return web.json_response(list_sessions())
         if what == "srt":
             lang = req.query.get("lang", "")
             if lang not in LANGS:  # also keeps the query out of the Content-Disposition header
@@ -1938,9 +2199,11 @@ def make_app(hub, args, conf):
                 new = body.get("new", "")
                 if len(new) < Auth.MIN_LEN:
                     return web.json_response({"ok": False, "error": f"Use at least {Auth.MIN_LEN} characters."})
-                # from another device, changing it needs the current one (a stolen session can't lock the owner out)
-                if auth.status()["has_password"] and not auth.local(req) and not auth.check(body.get("current", "")):
-                    auth.failed(req.remote)
+                # changing it needs the current one, from anywhere: a stolen session can't lock the owner out, and a
+                # process or page on this machine can't take it over silently. Forgotten: restart the server with
+                # --password NEW (needs this machine's keyboard). Setting the FIRST password stays free.
+                if auth.status()["has_password"] and not auth.check(body.get("current", "")):
+                    auth.failed(req)
                     return web.json_response({"ok": False, "error": "The current password is wrong."})
                 auth.set_password(new)
                 log(f"[auth] admin password changed from {req.remote} — all other devices signed out")
@@ -2084,7 +2347,20 @@ def make_app(hub, args, conf):
             hub.ndi.stop_all()
         MlxRuntime.stop()
 
-    app = web.Application()
+    extra_hosts = [args.ip or ""] + os.environ.get("LT_HOSTS", "").split(",")
+
+    @web.middleware
+    async def guard(req, handler):
+        if not host_ok(req.host, extra_hosts):
+            log(f"[auth] refused Host {req.host!r} from {req.remote} (DNS rebinding?)")
+            raise web.HTTPMisdirectedRequest(text="Unknown host name")
+        upgrade = req.headers.get("Upgrade", "").lower() == "websocket"
+        if (req.method not in ("GET", "HEAD", "OPTIONS") or upgrade) and cross_site(req):
+            log(f"[auth] refused cross-site {req.method} {req.path} from Origin {req.headers.get('Origin')!r}")
+            raise web.HTTPForbidden(text="Cross-site request refused")
+        return await handler(req)
+
+    app = web.Application(middlewares=[guard])
     app.on_startup.append(on_start)
     app.on_shutdown.append(on_stop)
     r = app.router
@@ -2133,10 +2409,13 @@ def main():
     if args.download:
         return download(args.download.split(","))
     args.ip = args.ip or local_ip()
-    os.makedirs(DATA, exist_ok=True)
+    private_dir(DATA)
     if args.password is not None and len(args.password) < Auth.MIN_LEN:
         sys.exit(f"--password: use at least {Auth.MIN_LEN} characters")
     conf = load_conf(args)
+    tighten_permissions()
+    sweep_tmp()
+    migrate_sessions()
     want = args.port or int(os.environ.get("LT_PORT") or 0) or int(conf.get("port") or 0) or DEFAULT_PORT
     args.port = free_port(want)
     args.port_note = "" if args.port == want else (
