@@ -1667,11 +1667,17 @@ class Auth:
     """Who may use Control and the API. The machine running LiveTranslate is trusted (localhost); every other device
     signs in with the admin password. Password: PBKDF2-SHA256, salted, never stored. Sessions: signed cookies valid
     30 days; changing the password or 'sign out all devices' rotates the secret and ends every session.
-    Brute force: 5 wrong attempts from a device locks it 30 s, doubling up to 15 min."""
+    Brute force: 5 wrong attempts lock the sender 30 s, doubling up to 15 min — but never this machine, and the
+    sender is a BROWSER that signed in before (known-device cookie) rather than an IP when there is one: at a venue the
+    whole audience Wi-Fi can reach us through one NAT address, and one curious guest must not lock the FOH laptop out
+    mid-show. A brand-new device caught in someone else's lock types the unlock code (log + Control on this machine)."""
     ITER, DAYS, COOKIE, MIN_LEN = 200_000, 30, "lt_admin", 8
+    DEV, DEV_DAYS = "lt_dev", 365  # known device: grants nothing, only its own failure counter
 
     def __init__(self, conf):
         self.conf, self.fails = conf, {}
+        conf.setdefault("dev_secret", secrets.token_hex(32))  # NOT rotated with the session secret
+        self.new_unlock_code()
         if conf.get("pin") and not conf.get("admin"):  # older versions: a 4-digit PIN keeps working until replaced
             salt = secrets.token_hex(16)
             conf["admin"] = {"salt": salt, "hash": self._hash(str(conf["pin"]), salt), "weak": True}
@@ -1712,21 +1718,67 @@ class Auth:
     def local(self, req):
         return req.remote in LOCAL
 
+    # ---- lockout
+    def _dev_sig(self, did):
+        return hmac.new(self.conf["dev_secret"].encode(), did.encode(), "sha256").hexdigest()[:32]
+
+    def device(self, req):
+        did, _, sig = (req.cookies.get(self.DEV) or "").partition(".")
+        return did if did and hmac.compare_digest(sig, self._dev_sig(did)) else None
+
+    def remember_device(self, req, resp):
+        if not self.device(req):
+            did = secrets.token_hex(12)
+            resp.set_cookie(self.DEV, f"{did}.{self._dev_sig(did)}", max_age=self.DEV_DAYS * 86400, httponly=True,
+                            samesite="Strict", path="/")
+
+    def key(self, req):
+        did = self.device(req)
+        return f"device {did[:6]}" if did else req.remote
+
+    def new_unlock_code(self):
+        self.unlock, self.unlock_misses = f"{secrets.randbelow(10 ** 4):04}-{secrets.randbelow(10 ** 4):04}", 0
+        log(f"[auth] unlock code for a locked-out device: {self.unlock} (also in Control → Access on this machine)")
+
+    def try_unlock(self, req, code):
+        """Clears the lock on this sender. 5 wrong codes → a new code (an 8-digit code can't be guessed in 5)."""
+        code = re.sub(r"\D", "", code or "")
+        if not code:
+            return False
+        if hmac.compare_digest(code, self.unlock.replace("-", "")):
+            self.fails.pop(self.key(req), None)
+            log(f"[auth] {self.key(req)} unlocked with the unlock code")
+            self.new_unlock_code()  # single use
+            return True
+        self.unlock_misses += 1
+        if self.unlock_misses >= 5:
+            self.new_unlock_code()
+        return False
+
+    def ok(self, req):
+        self.fails.pop(self.key(req), None)
+
     def authed(self, req):
         return self.local(req) or self.valid(req.cookies.get(self.COOKIE))
 
     def set_cookie(self, resp):
         resp.set_cookie(self.COOKIE, self.token(), max_age=self.DAYS * 86400, httponly=True, samesite="Strict", path="/")
 
-    def locked_for(self, ip):
-        n, until = self.fails.get(ip, (0, 0))
+    def locked_for(self, req):
+        if self.local(req):  # this machine is never locked out of itself
+            return 0
+        n, until = self.fails.get(self.key(req), (0, 0))
         return max(0, int(until - time.time()) + 1) if until > time.time() else 0
 
-    def failed(self, ip):
-        n = self.fails.get(ip, (0, 0))[0] + 1
+    def failed(self, req):
+        k = self.key(req)
+        if self.local(req):
+            log(f"[auth] wrong password on this machine (never locked)")
+            return 0
+        n = self.fails.get(k, (0, 0))[0] + 1
         wait = 0 if n < 5 else min(900, 30 * 2 ** (n - 5))
-        self.fails[ip] = (n, time.time() + wait)
-        log(f"[auth] wrong password from {ip} ({n})" + (f" — locked {wait} s" if wait else ""))
+        self.fails[k] = (n, time.time() + wait)
+        log(f"[auth] wrong password from {k} ({n})" + (f" — locked {wait} s; unlock code {self.unlock}" if wait else ""))
         return wait
 
 
@@ -1800,16 +1852,19 @@ def make_app(hub, args, conf):
         return page("control.html")
 
     async def login(req):
-        ip, err, wait = req.remote, "", auth.locked_for(req.remote)
+        err, wait = "", auth.locked_for(req)
+        data = await req.post() if req.method == "POST" else {}
+        if wait and auth.try_unlock(req, data.get("unlock", "")):
+            wait = 0
         if req.method == "POST" and not wait:
-            data = await req.post()
             if auth.check(data.get("password", "")):
-                auth.fails.pop(ip, None)
-                log(f"[auth] signed in from {ip}")
+                auth.ok(req)
+                log(f"[auth] signed in from {req.remote} ({auth.key(req)})")
                 r = web.HTTPFound("/control")
                 auth.set_cookie(r)
+                auth.remember_device(req, r)  # from now on this browser has its own lockout, not its IP's
                 raise r
-            wait = auth.failed(ip)
+            wait = auth.failed(req)
             err = "Wrong password."
         if wait:
             err = f"Too many attempts. Try again in {wait} s."
@@ -1820,7 +1875,7 @@ def make_app(hub, args, conf):
         with open(os.path.join(STATIC, "login.html"), encoding="utf-8") as f:
             page_ = f.read()
         page_ = page_.replace("{{ERROR}}", html.escape(err)).replace("{{FORM}}", "" if form else "hidden") \
-                     .replace("{{NOPW}}", "hidden" if form else "")
+                     .replace("{{NOPW}}", "hidden" if form else "").replace("{{UNLOCK}}", "" if wait else "hidden")
         return web.Response(content_type="text/html", text=page_, headers={"Cache-Control": "no-store"})
 
     async def logout(req):
@@ -1890,7 +1945,8 @@ def make_app(hub, args, conf):
         need_auth(req, api=True)
         what = req.match_info["what"]
         if what == "state":  # polled by the menu-bar app
-            return web.json_response({**hub.state(), **auth.status(), "base": base})
+            return web.json_response({**hub.state(), **auth.status(), "base": base,
+                                      **({"unlock": auth.unlock} if auth.local(req) else {})})
         if what == "info":
             try:  # offline (Argos) language pairs installed on this machine — Control warns about gaps
                 import argostranslate.package as ap
@@ -1898,7 +1954,8 @@ def make_app(hub, args, conf):
             except Exception:
                 pairs = []
             return web.json_response({"base": base, "langs": LANGS, "whisper": list(WHISPER), "style": STYLE,
-                                      "default": DEFAULT, "auth": {**auth.status(), "local": auth.local(req)},
+                                      "default": DEFAULT, "auth": {**auth.status(), "local": auth.local(req),
+                                                               **({"unlock": auth.unlock} if auth.local(req) else {})},
                                       "argos_pairs": pairs, "voices": hub.voice.langs(), "platform": sys.platform,
                                       "fit": machine_fit()})
         if what == "devices":
@@ -1988,7 +2045,7 @@ def make_app(hub, args, conf):
                 # process or page on this machine can't take it over silently. Forgotten: restart the server with
                 # --password NEW (needs this machine's keyboard). Setting the FIRST password stays free.
                 if auth.status()["has_password"] and not auth.check(body.get("current", "")):
-                    auth.failed(req.remote)
+                    auth.failed(req)
                     return web.json_response({"ok": False, "error": "The current password is wrong."})
                 auth.set_password(new)
                 log(f"[auth] admin password changed from {req.remote} — all other devices signed out")

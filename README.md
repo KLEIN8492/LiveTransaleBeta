@@ -91,8 +91,14 @@ very first password is set freely (fresh install). Forgotten: quit LiveTranslate
 refused when the browser says it comes from another site (`Origin` / `Sec-Fetch-Site`), and every request is refused
 when its `Host` name isn't this machine (IP address, `localhost`, its own name or `name.local`) — that stops DNS
 rebinding. A venue DNS name for the server: list it in `LT_HOSTS=name1,name2`. The menu-bar app, curl and the tests send
-no `Origin` and are unaffected. Five wrong attempts
-lock that device for 30 s, doubling up to 15 min. The password is stored only as a salted PBKDF2 hash (config.json,
+no `Origin` and are unaffected.
+
+**Lockout.** Five wrong attempts lock the sender for 30 s, doubling up to 15 min. **This machine is never locked out.**
+A browser that has signed in successfully before gets a *known-device* cookie (grants nothing by itself) and from then
+on has its **own** counter instead of its IP address's: at a venue the audience Wi-Fi often reaches us through one NAT
+address, and a guest guessing passwords must not lock the FOH laptop out mid-show. A brand-new device caught in such a
+lock types the **unlock code** on its sign-in page: an 8-digit code shown in Control → Access → Admins on this machine
+and written to the log; it changes after each use and after 5 wrong codes. The password is stored only as a salted PBKDF2 hash (config.json,
 readable by the owner only). Until a password exists, Control is reachable on the machine itself only. The audience page
 (`/`), the overlay (`/overlay`) and the QR card stay public — screens and phones need them. Test: `tests/test_auth.py`.
 

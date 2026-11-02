@@ -26,6 +26,8 @@ button{width:100%;height:44px;margin-top:16px;border:0;border-radius:5px;backgro
   <p>Control is for admins. Enter the admin password.</p>
   <label for="pw">Admin password</label>
   <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
+  <div {{UNLOCK}}><label for="unlock" style="margin-top:16px">Unlock code <span style="color:var(--faint)">(locked because of other attempts from this network? It is shown in Control → Access on the LiveTranslate machine, and in its log)</span></label>
+  <input id="unlock" name="unlock" inputmode="numeric" autocomplete="one-time-code" placeholder="0000-0000"></div>
   <div class="err" role="alert">{{ERROR}}</div>
   <button>Sign in</button>
 </form>

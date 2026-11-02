@@ -718,7 +718,8 @@ setInterval(async()=>{ if($('#captions').classList.contains('on')&&!ndiDirty){ t
 function drawAccess(){ const a=INFO.auth||{};
   $('#accessHint').textContent=!a.has_password?'Not possible yet: set an admin password first. Until then Control only opens on this machine.'
     :a.weak?'Protected only by the old 4-digit PIN. Set a proper admin password.'
-    :`Sign in with the admin password${a.changed?` (changed ${a.changed})`:''}. Five wrong attempts lock that device for a while.`;
+    :`Sign in with the admin password${a.changed?` (changed ${a.changed})`:''}. Five wrong attempts lock that device for a while; a device that signed in before is never locked by other people's attempts.`+
+     (a.unlock?` A device locked out by mistake: type the unlock code ${a.unlock} on its sign-in page.`:'');
   $('#curWrap').style.display=a.has_password?'':'none';  // also on this machine: see server.py api('password')
   $('#pwNewL').textContent=a.has_password?'New admin password':'Admin password';
   $('#logoutBtn').style.display=a.local?'none':''; $('#signoutAll').style.display=a.has_password?'':'none';
