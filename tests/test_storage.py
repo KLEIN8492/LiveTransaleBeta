@@ -62,6 +62,22 @@ old = [S.read_json(p, {}) for p in S._session_files() if "old-show" in p]
 check("pre-id files are migrated to <id>-<slug>.json once",
       not os.path.exists(os.path.join(S.SESS_DIR, "old-show.json")) and len(old) == 1 and old[0].get("id"))
 
+# --- crash litter and launch behaviour
+mine = os.path.join(S.SESS_DIR, f"x.json.{os.getpid() + 999999}.1.tmp")  # a dead process's half-written file
+live = os.path.join(S.DATA, f"caption_presets.json.{os.getppid()}.1.tmp")  # another LIVE process still writing
+for p in (mine, live):
+    open(p, "w").close()
+S.sweep_tmp()
+check("startup sweeps .tmp files left by a crashed write", not os.path.exists(mine))
+check("…but not those of a LiveTranslate still running", os.path.exists(live))
+os.remove(live)
+A = S.Auth({"secret": "a" * 64})
+tok = A.token()
+A.on_launch(resumed=True)
+check("admin cookies survive a supervised restart (crash recovery / port change)", A.valid(tok))
+A.on_launch(resumed=False)
+check("admin cookies end when LiveTranslate is started afresh", not A.valid(tok))
+
 # --- Issue 5: MlxRuntime restart vs url() (fake child process, no model loaded)
 import threading  # noqa: E402
 

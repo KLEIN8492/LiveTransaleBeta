@@ -212,6 +212,28 @@ def save_session(s):
             os.remove(old)
 
 
+def sweep_tmp():
+    """write_json/save_conf leave <file>.<pid>.<thread>.tmp behind if the process dies mid-write (power cut, kill -9).
+    Swept at startup — except files of another LiveTranslate that is still running and may be writing right now."""
+    for d in (DATA, SESS_DIR):
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            if not f.endswith(".tmp"):
+                continue
+            m = re.search(r"\.(\d+)\.\d+\.tmp$", f)
+            if m and int(m.group(1)) != os.getpid():
+                try:
+                    os.kill(int(m.group(1)), 0)
+                    continue  # that process is alive
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+            try:
+                os.remove(os.path.join(d, f))
+            except OSError:
+                pass
+
+
 def migrate_sessions():
     """Files from before ids (<slug>.json): give each an id and move it to <id>-<slug>.json, once, at startup."""
     for path in _session_files():
@@ -1814,6 +1836,14 @@ class Auth:
         self.conf["admin"] = {"salt": salt, "hash": self._hash(pw, salt), "changed": time.strftime("%Y-%m-%d %H:%M")}
         self.rotate()
 
+    def on_launch(self, resumed):
+        """Admin cookies end when LiveTranslate is started afresh (event machines restart all the time: a cookie
+        surviving that gains nothing and loses an easy way to revoke access). They survive the restarts the menu-bar /
+        tray app does by itself — after a crash or a port change, both with --autostart — so a remote operator isn't
+        signed out mid-show by crash recovery. That flow is why the 30-day lifetime stays."""
+        if not resumed:
+            self.rotate()
+
     def rotate(self):  # every existing session becomes invalid
         self.conf["secret"] = secrets.token_hex(32)
         save_conf(self.conf)
@@ -1944,6 +1974,7 @@ def cross_site(req):
 def make_app(hub, args, conf):
     base = f"http://{args.ip}:{args.port}"
     auth = Auth(conf)
+    auth.on_launch(bool(args.autostart))
     if args.password:
         auth.set_password(args.password)
     authed = auth.authed
@@ -2372,6 +2403,7 @@ def main():
         sys.exit(f"--password: use at least {Auth.MIN_LEN} characters")
     conf = load_conf(args)
     tighten_permissions()
+    sweep_tmp()
     migrate_sessions()
     want = args.port or int(os.environ.get("LT_PORT") or 0) or int(conf.get("port") or 0) or DEFAULT_PORT
     args.port = free_port(want)

@@ -82,7 +82,8 @@ Run it on a dedicated machine and operate from a laptop or iPad at the desk.
 ## Admin access
 Control and its API are for admins. **The machine running LiveTranslate opens Control without a password**; every other
 device (laptop, iPad, phone) must sign in with the **admin password** (set during setup, or in Control → Access →
-Admins; at least 8 characters). Sessions last 30 days per browser. Changing the password or "Sign out all other
+Admins; at least 8 characters). Sign-ins last until LiveTranslate is started afresh (30 days at most): they survive
+the automatic restarts after a crash or a port change, so a remote operator isn't signed out mid-show. Changing the password or "Sign out all other
 devices" ends every other session. **Changing it always requires the current password — on this machine too**; only the
 very first password is set freely (fresh install). Forgotten: quit LiveTranslate and start the server once with
 `--password NEW` (needs this machine's keyboard).
