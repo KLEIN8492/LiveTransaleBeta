@@ -307,7 +307,13 @@ def mlx_repo(name):
 
 
 class MlxRuntime:
-    """mlx_srv.py child process, started on first use, shared by every session; dies with the server."""
+    """mlx_srv.py child process, started on first use, shared by every session; dies with the server.
+
+    Invariant (all under `lock`): `proc`/`port` describe the CURRENT runtime or are None/0 — then the next url()
+    starts one. A request that fails reports the url it USED (restart(url)): only that runtime is killed. Without
+    that, the French and Spanish threads both failing against an old runtime could kill the fresh one a third thread
+    had just started, and the 20 s circuit breaker would keep tripping — the "every AI request refused, silently
+    Argos" state seen at the 2026-10-11 rehearsal."""
     lock, proc, port = threading.Lock(), None, 0
 
     @classmethod
@@ -327,9 +333,10 @@ class MlxRuntime:
                             break
                         time.sleep(0.2)
                 else:
-                    log(f"[llm] MLX runtime did not answer on :{cls.port} — restarting it on the next line")
-                    cls.restart()
-        return f"http://127.0.0.1:{cls.port}"
+                    port = cls.port
+                    cls._kill_locked()  # NOT restart(): that takes the lock we hold (deadlock)
+                    raise RuntimeError(f"MLX runtime did not answer on :{port} — a new one starts with the next line")
+            return f"http://127.0.0.1:{cls.port}"
 
     @staticmethod
     def _free_port():
@@ -338,15 +345,30 @@ class MlxRuntime:
             return so.getsockname()[1]
 
     @classmethod
-    def restart(cls):
-        """Called when the runtime refuses connections: alive but deaf is worse than dead (never restarted)."""
+    def _kill_locked(cls):
         if cls.proc and cls.proc.poll() is None:
             cls.proc.kill()
+            try:
+                cls.proc.wait(2)  # reaped: no zombie, and its port is free again
+            except Exception:
+                pass
+        cls.proc, cls.port = None, 0
+
+    @classmethod
+    def restart(cls, used_url):
+        """A request to `used_url` was refused: alive but deaf is worse than dead. Kills that runtime only if it is
+        still the current one; the next url() starts a new one."""
+        with cls.lock:
+            if cls.proc is not None and used_url == f"http://127.0.0.1:{cls.port}":
+                log(f"[llm] MLX runtime on :{cls.port} refused a request — restarting it")
+                cls._kill_locked()
 
     @classmethod
     def stop(cls):
-        if cls.proc and cls.proc.poll() is None:
-            cls.proc.terminate()
+        with cls.lock:
+            if cls.proc and cls.proc.poll() is None:
+                cls.proc.terminate()
+            cls.proc, cls.port = None, 0
 
 
 class Translator:
@@ -439,10 +461,7 @@ class Translator:
             try:
                 if self.mlx:
                     body = json.dumps({"model": self.mlx, "temperature": 0, "max_tokens": 40, "messages": msgs}).encode()
-                    req = urllib.request.Request(MlxRuntime.url() + "/v1/chat/completions", body,
-                                                 {"Content-Type": "application/json"})
-                    with urllib.request.urlopen(req, timeout=60) as r:
-                        out = json.load(r)["choices"][0]["message"]["content"]
+                    out = self._mlx_post(body, 60)
                 else:
                     body = json.dumps({"model": eng[7:], "stream": False, "keep_alive": "60m", "think": False,
                                        "options": {"temperature": 0}, "messages": msgs}).encode()
@@ -459,10 +478,19 @@ class Translator:
         yield_to_stt()
         body = json.dumps({"model": self.mlx, "temperature": 0, "max_tokens": 300,
                            "messages": self._messages(text, frm, to, self.s.get("engine", ""))}).encode()
-        req = urllib.request.Request(MlxRuntime.url() + "/v1/chat/completions", body, {"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            out = json.load(r)["choices"][0]["message"]["content"]
-        return out.strip().strip('"“”«» ')
+        return self._mlx_post(body, timeout).strip().strip('"“”«» ')
+
+    @staticmethod
+    def _mlx_post(body, timeout):
+        url = MlxRuntime.url()  # this thread's runtime: on "refused", restart exactly this one (see MlxRuntime)
+        req = urllib.request.Request(url + "/v1/chat/completions", body, {"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.load(r)["choices"][0]["message"]["content"]
+        except Exception as e:
+            if "refused" in repr(e).lower():
+                MlxRuntime.restart(url)
+            raise
 
     def _ollama(self, model, text, frm, to, timeout=6):
         body = json.dumps({"model": model, "stream": False, "keep_alive": "60m", "think": False,
@@ -546,9 +574,7 @@ class Translator:
                 return self._ollama(eng[7:], text, frm, to)
             except Exception as e:
                 # circuit breaker: don't make every following line wait for a dead/hung LLM
-                self.llm_down_until = time.time() + 20
-                if self.mlx and "refused" in repr(e).lower():
-                    MlxRuntime.restart()
+                self.llm_down_until = time.time() + 20  # (a refused MLX runtime was already restarted in _mlx_post)
                 log(f"[llm] {e!r} -> Argos for the next 20 s")
         try:
             return self._argos(text, frm, to)

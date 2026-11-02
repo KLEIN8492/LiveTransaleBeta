@@ -62,5 +62,58 @@ old = [S.read_json(p, {}) for p in S._session_files() if "old-show" in p]
 check("pre-id files are migrated to <id>-<slug>.json once",
       not os.path.exists(os.path.join(S.SESS_DIR, "old-show.json")) and len(old) == 1 and old[0].get("id"))
 
+# --- Issue 5: MlxRuntime restart vs url() (fake child process, no model loaded)
+import threading  # noqa: E402
+
+
+class FakeProc:
+    alive = []
+
+    def __init__(self, *a, **k):
+        self.dead = False
+        FakeProc.alive.append(self)
+
+    def poll(self):
+        return 0 if self.dead else None
+
+    def kill(self):
+        self.dead = True
+
+    terminate = kill
+
+    def wait(self, t=None):
+        return 0
+
+
+R, real_popen, real_open, real_sleep = S.MlxRuntime, S.subprocess.Popen, S.urllib.request.urlopen, S.time.sleep
+S.subprocess.Popen, S.urllib.request.urlopen = FakeProc, (lambda *a, **k: None)  # runtime answers at once
+try:
+    u1 = R.url()
+    R.restart(u1)  # FR thread: refused by runtime 1
+    u2 = R.url()   # a third thread starts runtime 2
+    p2 = R.proc
+    R.restart(u1)  # ES thread: ALSO refused by runtime 1, reported late
+    check("a late failure from the old runtime doesn't kill the new one", not p2.dead and R.url() == u2)
+    R.restart(u2)
+    check("restart clears the runtime so the next url() starts a fresh one", R.proc is None and R.port == 0 and p2.dead)
+
+    def deaf(*a, **k):
+        raise OSError("connection refused")
+    S.urllib.request.urlopen, S.time.sleep = deaf, (lambda x: None)  # starts but never answers
+    box = {}
+
+    def call_url():
+        try:
+            R.url()
+        except RuntimeError as e:
+            box["err"] = e
+    t = threading.Thread(target=call_url, daemon=True)
+    t.start(); t.join(5)
+    check("a runtime that never answers raises instead of deadlocking url()", not t.is_alive() and box.get("err"))
+    check("…and it is killed and forgotten", R.proc is None and all(p.dead for p in FakeProc.alive))
+    check("the lock is free afterwards", R.lock.acquire(timeout=1) and (R.lock.release() or True))
+finally:
+    S.subprocess.Popen, S.urllib.request.urlopen, S.time.sleep = real_popen, real_open, real_sleep
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
