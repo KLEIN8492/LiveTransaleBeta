@@ -67,6 +67,18 @@ except aiohttp.WSServerHandshakeError as e:
     ws_refused = e.status == 403
 check("cross-site page can't open the operator WebSocket", ws_refused)
 check("this Mac's own Control page gets the operator WebSocket", asyncio.run(ws_kind(None, LOCAL, origin=LOCAL)) == "state")
+# --- the venue Wi-Fi password is write-only: stored here, printed on the (admin-only) QR card, never sent back
+WIFI = "s3cret-wifi-pw"
+req(LOCAL + "/api/update", {"wifi_ssid": "Venue", "wifi_pass": WIFI})
+st, body, _, _ = req(LOCAL + "/api/state")
+check("the API never returns the Wi-Fi password", WIFI not in body and json.loads(body)["session"]["wifi_pass_set"])
+req(LOCAL + "/api/update", {"wifi_ssid": "Venue", "context": "edited"})  # Control sends no wifi_pass unless retyped
+check("applying other changes keeps the stored Wi-Fi password", WIFI in req(LOCAL + "/card")[1])
+check("the QR card (shows the Wi-Fi password) needs admin access", req(REMOTE + "/card")[0] == 302)
+check("the Wi-Fi QR code needs admin access", req(REMOTE + "/qr/wifi.svg")[0] == 302)
+check("the audience QR code stays public", req(REMOTE + "/qr/guest.svg")[0] == 200)
+req(LOCAL + "/api/update", {"wifi_pass": ""})
+check("sending an empty Wi-Fi password removes it", not json.loads(req(LOCAL + "/api/state")[1])["session"]["wifi_pass_set"])
 # --- bootstrap: the FIRST password is set freely from this machine (a fresh install); after that it takes the current one
 check("set password from this Mac", json.loads(req(LOCAL + "/api/password", {"new": PW})[1])["ok"])
 check("replacing it from this Mac without the current password is refused",

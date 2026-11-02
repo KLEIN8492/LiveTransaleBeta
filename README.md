@@ -99,7 +99,9 @@ on has its **own** counter instead of its IP address's: at a venue the audience 
 address, and a guest guessing passwords must not lock the FOH laptop out mid-show. A brand-new device caught in such a
 lock types the **unlock code** on its sign-in page: an 8-digit code shown in Control → Access → Admins on this machine
 and written to the log; it changes after each use and after 5 wrong codes. The password is stored only as a salted PBKDF2 hash (config.json,
-readable by the owner only). Until a password exists, Control is reachable on the machine itself only. The audience page
+readable by the owner only). The audience **Wi-Fi password** is write-only in Control: it is kept in the saved session
+(owner-only file) and printed on the QR card, which — like the Wi-Fi QR code — needs admin access; the API only says
+whether one is set. Until a password exists, Control is reachable on the machine itself only. The audience page
 (`/`), the overlay (`/overlay`) and the QR card stay public — screens and phones need them. Test: `tests/test_auth.py`.
 
 ## Multilingual events (several spoken languages)

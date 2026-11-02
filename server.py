@@ -147,13 +147,39 @@ def write_json(path, obj):
     previous version intact instead of a half-written file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    # created owner-only (0600) from the first byte: sessions hold the venue Wi-Fi password
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
 
 
+def redact(s):
+    """A session as it leaves over the network: the Wi-Fi password stays on this machine (it is only printed on the
+    QR card, which is admin-only) — Control learns whether one is set, never its value."""
+    out = {k: v for k, v in s.items() if k != "wifi_pass"}
+    out["wifi_pass_set"] = bool(s.get("wifi_pass"))
+    return out
+
+
+def keep_secret(new, old):
+    """Control treats the Wi-Fi password as write-only: it sends `wifi_pass` only when the operator typed a new one
+    (or "" to remove it). Absent → keep the stored one."""
+    if "wifi_pass" not in new:
+        new = {**new, "wifi_pass": (old or {}).get("wifi_pass", "")}
+    new.pop("wifi_pass_set", None)
+    return new
+
+
+def session_path(s):
+    return os.path.join(SESS_DIR, slug(s["name"]) + ".json")
+
+
+def saved_session(s):
+    return read_json(session_path(s), {})
+
+
 def save_session(s):
-    write_json(os.path.join(SESS_DIR, slug(s["name"]) + ".json"), s)
+    write_json(session_path(s), s)
 
 
 # ======================================================================= translation
@@ -1084,7 +1110,7 @@ class Hub:
     def state(self):
         return {"type": "state", "running": self.running, "loading": self.loading,
                 "monitoring": bool(self.cap) and not self.running, "notice": self.notice,
-                "paused": self.paused, "error": self.error, "session": self.s, "demo": self.demo,
+                "paused": self.paused, "error": self.error, "session": redact(self.s), "demo": self.demo,
                 "stt_note": getattr(self.stt, "note", "") if self.running else "",
                 "port_note": getattr(self, "port_note", ""), "echo_note": self.echo_note,
                 "counts": {k: len(v) for k, v in self.clients.items()}}
@@ -1118,7 +1144,8 @@ class Hub:
     def start(self, s):
         with self.lock:
             self._stop_capture()
-            self.s = {**DEFAULT, **s}
+            same = s.get("name") == self.s.get("name")
+            self.s = {**DEFAULT, **keep_secret(s, self.s if same else saved_session(s))}
             self.running, self.loading, self.error, self.paused = False, True, "", False
             self.push_state()
             try:
@@ -1261,6 +1288,7 @@ class Hub:
         langs_changed = session_langs({**self.s, **{k: s[k] for k in ("source", "targets") if k in s}}) != session_langs(self.s)
         if "source" in s and s["source"] != self.s.get("source"):
             self.notice, self.mismatch = "", (None, 0)
+        s = keep_secret(s, self.s)
         for k in ("name", "context", "names", "glossary", "engine", "vmix", "wifi_ssid", "wifi_pass", "targets", "bleep", "bleep_extra", "source", "gain_db", "phone_pace", "voice_gender") + audio_keys:
             if k in s:
                 self.s[k] = s[k]
@@ -1657,10 +1685,26 @@ def free_port(want):
 
 def save_conf(conf):
     tmp = CONF_PATH + ".tmp"
-    with open(tmp, "w") as f:
+    # owner-only from creation (no window where it is world-readable): password hash and session secrets
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         json.dump(conf, f, indent=2)
-    os.chmod(tmp, 0o600)  # holds the password hash and the session secret
+    os.chmod(tmp, 0o600)  # an existing .tmp from a crash keeps its old mode through os.open
     os.replace(tmp, CONF_PATH)
+
+
+def tighten_permissions():
+    """Older versions wrote sessions/presets with the default umask (0644): readable by every user of the machine."""
+    if IS_WIN:
+        return
+    for d in (DATA, SESS_DIR):
+        if os.path.isdir(d):
+            os.chmod(d, 0o700)
+    for path in [CONF_PATH] + ([os.path.join(SESS_DIR, f) for f in os.listdir(SESS_DIR)] if os.path.isdir(SESS_DIR) else []):
+        try:
+            if os.path.isfile(path) and os.stat(path).st_mode & 0o077:
+                os.chmod(path, 0o600)
+        except OSError:
+            pass
 
 
 class Auth:
@@ -1888,6 +1932,8 @@ def make_app(hub, args, conf):
         return qrcode.make(data, image_factory=qrcode.image.svg.SvgPathImage, border=2).to_string().decode()
 
     async def qr(req):
+        if req.match_info["kind"] == "wifi":
+            need_auth(req)  # the Wi-Fi password: only for the operator printing the card
         s = hub.s
         # Wi-Fi QR syntax: \ ; , : " must be backslash-escaped or phones join the wrong network / fail
         wq = lambda v: re.sub(r'([\\;,:"])', r"\\\1", str(v or ""))
@@ -1929,6 +1975,7 @@ def make_app(hub, args, conf):
         return web.Response(body=mp3, content_type="audio/mpeg", headers={"Cache-Control": "max-age=600"})
 
     async def card(req):
+        need_auth(req)  # shows the Wi-Fi password; the audience scans the PRINTED card, never loads this page
         with open(os.path.join(STATIC, "card.html"), encoding="utf-8") as f:
             page_html = f.read()
         s = hub.s
@@ -1981,7 +2028,7 @@ def make_app(hub, args, conf):
                 if fn.endswith(".json"):  # one corrupt file must not hide every saved setup
                     s = read_json(os.path.join(SESS_DIR, fn), None)
                     if isinstance(s, dict) and s.get("name"):
-                        out.append(s)
+                        out.append(redact(s))
             return web.json_response(out)
         if what == "srt":
             lang = req.query.get("lang", "")
@@ -2255,6 +2302,7 @@ def main():
     if args.password is not None and len(args.password) < Auth.MIN_LEN:
         sys.exit(f"--password: use at least {Auth.MIN_LEN} characters")
     conf = load_conf(args)
+    tighten_permissions()
     want = args.port or int(os.environ.get("LT_PORT") or 0) or int(conf.get("port") or 0) or DEFAULT_PORT
     args.port = free_port(want)
     args.port_note = "" if args.port == want else (

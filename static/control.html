@@ -287,7 +287,8 @@ input.sug{color:var(--muted);font-style:italic}  /* glossary suggestion, not che
         <details class="tune"><summary><b>Audience Wi-Fi</b><span>Printed on the QR card for phones</span></summary><div>
           <div class="two">
             <div class="f"><label for="s_wifi_ssid">Network name</label><input type="text" id="s_wifi_ssid"></div>
-            <div class="f"><label for="s_wifi_pass">Password</label><input type="text" id="s_wifi_pass"></div>
+            <div class="f"><label for="s_wifi_pass">Password</label><input type="password" id="s_wifi_pass" autocomplete="off">
+              <div class="hint" id="wifiPassHint"></div></div>
           </div></div></details>
       </div>
     </div>
@@ -414,7 +415,11 @@ function fillForm(s){
   $('#s_device').innerHTML=`<option value="">System default input</option>`+devices.map(d=>`<option value="${esc(d.name)}">${esc(d.name)} (${d.ch} ch)</option>`).join('')+
     (known?'':`<option value="${esc(dv)}">${esc(dv)} (not connected)</option>`);
   $('#s_device').value=dv; drawChannels(s.channel);
-  ['silence_ms','max_s','partial_s','gate_db','wifi_ssid','wifi_pass'].forEach(k=>$('#s_'+k).value=s[k]??'');
+  ['silence_ms','max_s','partial_s','gate_db','wifi_ssid'].forEach(k=>$('#s_'+k).value=s[k]??'');
+  // write-only: the server never sends the Wi-Fi password back, only whether one is saved
+  wifiClear=false; $('#s_wifi_pass').value=''; $('#s_wifi_pass').placeholder=s.wifi_pass_set?'Saved — type to replace':'';
+  $('#wifiPassHint').innerHTML=s.wifi_pass_set?'Printed on the QR card. <a href="#" id="wifiClear">Remove it</a>':'';
+  const wc=$('#wifiClear'); if(wc) wc.onclick=e=>{ e.preventDefault(); wifiClear=true; $('#s_wifi_pass').placeholder='Will be removed'; $('#wifiPassHint').textContent='Removed when you start or apply.'; };
   $('#s_gain_db').value=s.gain_db??0; gainLabel(); $('#s_phone_pace').value=s.phone_pace||'smooth'; $('#s_voice_gender').value=s.voice_gender||'female';
   $('#s_bleep').checked=s.bleep!==false; $('#s_bleep_extra').value=s.bleep_extra||'';
   $('#v_host').value=s.vmix?.host||''; $('#v_input').value=s.vmix?.input||''; $('#v_clear').value=s.vmix?.clear??6;
@@ -493,9 +498,10 @@ function readForm(){
   return {name:$('#s_name').value.trim()||'Session',event_type:eventType,context:$('#s_context').value,names:$('#s_names').value,glossary:glossary.filter(g=>Object.values(g).some(v=>v)),
     source:$('#s_source').value,targets:targets(),engine:$('#s_engine').value,whisper:$('#s_whisper').value,device:$('#s_device').value,
     channel:+$('#s_channel').value||1,silence_ms:+$('#s_silence_ms').value||600,max_s:+$('#s_max_s').value||7,phone_pace:$('#s_phone_pace').value,voice_gender:$('#s_voice_gender').value,partial_s:$('#s_partial_s').value===''?0.6:+$('#s_partial_s').value,gate_db:+$('#s_gate_db').value||-60,gain_db:+$('#s_gain_db').value||0,
-    vmix:{host:$('#v_host').value.trim(),input:$('#v_input').value.trim(),fields:vf,clear:$('#v_clear').value===''?6:Math.max(0,+$('#v_clear').value)},bleep:$('#s_bleep').checked,bleep_extra:$('#s_bleep_extra').value,wifi_ssid:$('#s_wifi_ssid').value,wifi_pass:$('#s_wifi_pass').value};
+    vmix:{host:$('#v_host').value.trim(),input:$('#v_input').value.trim(),fields:vf,clear:$('#v_clear').value===''?6:Math.max(0,+$('#v_clear').value)},bleep:$('#s_bleep').checked,bleep_extra:$('#s_bleep_extra').value,wifi_ssid:$('#s_wifi_ssid').value,
+    ...($('#s_wifi_pass').value?{wifi_pass:$('#s_wifi_pass').value}:wifiClear?{wifi_pass:''}:{})};
 }
-let prevSrc=null;
+let prevSrc=null, wifiClear=false;
 function setSource(v){ syncGloss(); $('#s_source').value=v; sourceChanged(); }
 $$('#spokenSeg button').forEach(b=>b.onclick=()=>setSource(b.dataset.m==='auto'?'auto':$('#s_lang1').value));
 $('#s_lang1').onchange=()=>setSource($('#s_lang1').value);
