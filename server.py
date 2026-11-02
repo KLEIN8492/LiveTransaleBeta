@@ -142,10 +142,16 @@ def read_json(path, default):
         return default
 
 
+def private_dir(d):
+    """Every folder LiveTranslate creates is owner-only (0700): sessions hold the Wi-Fi password, transcripts what
+    was said. Whoever creates one first — Control listing saved setups, a save, a transcript — gets the same mode."""
+    os.makedirs(d, mode=0o700, exist_ok=True)
+
+
 def write_json(path, obj):
     """Atomic: write a temp file, then rename over the old one — a crash or power cut mid-write leaves the
     previous version intact instead of a half-written file."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    private_dir(os.path.dirname(path))
     tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
     # created owner-only (0600) from the first byte: sessions hold the venue Wi-Fi password
     with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
@@ -232,6 +238,18 @@ def sweep_tmp():
                 os.remove(os.path.join(d, f))
             except OSError:
                 pass
+
+
+def list_sessions():
+    """Saved setups for Control's "Open a saved setup…", as they may leave over the network (redacted)."""
+    private_dir(SESS_DIR)
+    out = []
+    for fn in sorted(os.listdir(SESS_DIR)):
+        if fn.endswith(".json"):  # one corrupt file must not hide every saved setup
+            s = read_json(os.path.join(SESS_DIR, fn), None)
+            if isinstance(s, dict) and s.get("name"):
+                out.append(redact(s))
+    return out
 
 
 def migrate_sessions():
@@ -1248,7 +1266,7 @@ class Hub:
                 if not self.demo:
                     log(f"[stt] loading {self.s['whisper']}…")
                     self.stt = make_stt(self.s)
-                os.makedirs(TRANS_DIR, exist_ok=True)
+                private_dir(TRANS_DIR)
                 self.transcript = os.path.join(
                     TRANS_DIR, f"{datetime.now():%Y-%m-%d_%H%M}_{slug(self.s['name'])}.txt")
                 self.history.clear()
@@ -1787,7 +1805,7 @@ def tighten_permissions():
     """Older versions wrote sessions/presets with the default umask (0644): readable by every user of the machine."""
     if IS_WIN:
         return
-    for d in (DATA, SESS_DIR):
+    for d in (DATA, SESS_DIR, TRANS_DIR):
         if os.path.isdir(d):
             os.chmod(d, 0o700)
     for path in [CONF_PATH] + ([os.path.join(SESS_DIR, f) for f in os.listdir(SESS_DIR)] if os.path.isdir(SESS_DIR) else []):
@@ -2122,14 +2140,7 @@ def make_app(hub, args, conf):
             names += [n for n in MLX_MODELS if n not in names and mlx_repo(n)]
             return web.json_response(names)
         if what == "sessions":
-            os.makedirs(SESS_DIR, exist_ok=True)
-            out = []
-            for fn in sorted(os.listdir(SESS_DIR)):
-                if fn.endswith(".json"):  # one corrupt file must not hide every saved setup
-                    s = read_json(os.path.join(SESS_DIR, fn), None)
-                    if isinstance(s, dict) and s.get("name"):
-                        out.append(redact(s))
-            return web.json_response(out)
+            return web.json_response(list_sessions())
         if what == "srt":
             lang = req.query.get("lang", "")
             if lang not in LANGS:  # also keeps the query out of the Content-Disposition header
@@ -2398,7 +2409,7 @@ def main():
     if args.download:
         return download(args.download.split(","))
     args.ip = args.ip or local_ip()
-    os.makedirs(DATA, exist_ok=True)
+    private_dir(DATA)
     if args.password is not None and len(args.password) < Auth.MIN_LEN:
         sys.exit(f"--password: use at least {Auth.MIN_LEN} characters")
     conf = load_conf(args)

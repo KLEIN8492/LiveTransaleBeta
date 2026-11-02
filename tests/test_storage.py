@@ -26,7 +26,11 @@ def mode(p):
 # --- Issue 3: files holding secrets are owner-only
 S.save_conf({"secret": "x"})
 check("config.json is created owner-only (0600)", mode(S.CONF_PATH) == 0o600)
+S.list_sessions()  # the real order: Control lists saved setups before the first session is ever saved
+check("the sessions folder is created owner-only (0700), whoever creates it first", mode(S.SESS_DIR) == 0o700)
 S.save_session({**S.DEFAULT, "name": "Gala", "wifi_pass": "pw"})
+check("listing saved setups never returns the Wi-Fi password",
+      all("wifi_pass" not in x and x["wifi_pass_set"] for x in S.list_sessions()))
 sess = [os.path.join(S.SESS_DIR, f) for f in os.listdir(S.SESS_DIR)]
 check("saved sessions (hold the Wi-Fi password) are owner-only", sess and all(mode(p) == 0o600 for p in sess))
 os.chmod(S.CONF_PATH, 0o644); os.chmod(sess[0], 0o644)
