@@ -719,7 +719,7 @@ function drawAccess(){ const a=INFO.auth||{};
   $('#accessHint').textContent=!a.has_password?'Not possible yet: set an admin password first. Until then Control only opens on this machine.'
     :a.weak?'Protected only by the old 4-digit PIN. Set a proper admin password.'
     :`Sign in with the admin password${a.changed?` (changed ${a.changed})`:''}. Five wrong attempts lock that device for a while.`;
-  $('#curWrap').style.display=a.has_password&&!a.local?'':'none';
+  $('#curWrap').style.display=a.has_password?'':'none';  // also on this machine: see server.py api('password')
   $('#pwNewL').textContent=a.has_password?'New admin password':'Admin password';
   $('#logoutBtn').style.display=a.local?'none':''; $('#signoutAll').style.display=a.has_password?'':'none';
   $('#authNote').innerHTML=a.local&&(!a.has_password||a.weak)?'Set an admin password to use Control from other devices: <a href="#" id="toAccess">Access → Admins</a>':'';

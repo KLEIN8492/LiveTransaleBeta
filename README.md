@@ -83,7 +83,15 @@ Run it on a dedicated machine and operate from a laptop or iPad at the desk.
 Control and its API are for admins. **The machine running LiveTranslate opens Control without a password**; every other
 device (laptop, iPad, phone) must sign in with the **admin password** (set during setup, or in Control → Access →
 Admins; at least 8 characters). Sessions last 30 days per browser. Changing the password or "Sign out all other
-devices" ends every other session; changing it from another device requires the current password. Five wrong attempts
+devices" ends every other session. **Changing it always requires the current password — on this machine too**; only the
+very first password is set freely (fresh install). Forgotten: quit LiveTranslate and start the server once with
+`--password NEW` (needs this machine's keyboard).
+
+**Other websites can't use the passwordless localhost.** Every state change (POST, and the WebSocket Control uses) is
+refused when the browser says it comes from another site (`Origin` / `Sec-Fetch-Site`), and every request is refused
+when its `Host` name isn't this machine (IP address, `localhost`, its own name or `name.local`) — that stops DNS
+rebinding. A venue DNS name for the server: list it in `LT_HOSTS=name1,name2`. The menu-bar app, curl and the tests send
+no `Origin` and are unaffected. Five wrong attempts
 lock that device for 30 s, doubling up to 15 min. The password is stored only as a salted PBKDF2 hash (config.json,
 readable by the owner only). Until a password exists, Control is reachable on the machine itself only. The audience page
 (`/`), the overlay (`/overlay`) and the QR card stay public — screens and phones need them. Test: `tests/test_auth.py`.

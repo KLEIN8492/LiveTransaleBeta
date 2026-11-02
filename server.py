@@ -5,7 +5,7 @@ Audio in -> VAD -> Whisper (MLX) -> Argos or local LLM (Ollama) -> network outpu
   /control  operator console (PIN)      /overlay  vMix / OBS browser-source captions
   /         audience phones (QR)        /card     printable QR card
 """
-import argparse, asyncio, collections, difflib, hashlib, hmac, html, json, os, queue, re, secrets, signal, socket, subprocess, sys, threading, time
+import argparse, asyncio, collections, difflib, hashlib, hmac, html, ipaddress, json, os, queue, re, secrets, signal, socket, subprocess, sys, threading, time
 import urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -1730,6 +1730,52 @@ class Auth:
         return wait
 
 
+def host_ok(host, extra=()):
+    """DNS rebinding defence: a malicious site can point its own name at 127.0.0.1, and the browser then treats
+    our server as that site (Host: evil.example). Only addresses this machine is really reached by pass: any IP
+    literal (an attacker can't make a page's origin be our IP), localhost, this machine's own name (.local for
+    iPads via Bonjour), and names listed in LT_HOSTS (a venue DNS name)."""
+    name = (host or "").rsplit(":", 1)[0] if not (host or "").endswith("]") else host
+    name = name.strip("[]").lower().rstrip(".")
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        pass
+    return name in my_names() or name in {h.strip().lower() for h in extra if h.strip()}
+
+
+_NAMES = None
+
+
+def my_names():
+    """localhost + this machine's names: the system host name (e.g. macbook.home) and the Bonjour name iPads use
+    (scutil's LocalHostName + .local — on a Mac it differs from the host name)."""
+    global _NAMES
+    if _NAMES is None:
+        n = {"localhost", socket.gethostname().lower()}
+        if IS_MAC:
+            try:
+                n.add(subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True,
+                                     timeout=2).stdout.strip().lower())
+            except Exception:
+                pass
+        _NAMES = {v for x in n if x for v in (x, x.split(".")[0], x.split(".")[0] + ".local")}
+    return _NAMES
+
+
+def cross_site(req):
+    """A state change sent by ANOTHER website open in the operator's browser. Control is passwordless on this machine,
+    so without this check any page could POST to 127.0.0.1 (simple form posts need no CORS) or open the operator
+    WebSocket (WebSockets have no CORS at all). Browsers always send Origin on POST and WebSocket upgrades, and
+    Sec-Fetch-Site on top in current ones; non-browser clients (the menu-bar app, curl, tests) send neither."""
+    site = req.headers.get("Sec-Fetch-Site")
+    if site and site not in ("same-origin", "none"):  # "none" = typed in the address bar / bookmark
+        return True
+    origin = req.headers.get("Origin")
+    return origin is not None and origin != f"{req.scheme}://{req.host}"  # also refuses Origin: null (sandboxes)
+
+
 def make_app(hub, args, conf):
     base = f"http://{args.ip}:{args.port}"
     auth = Auth(conf)
@@ -1938,8 +1984,10 @@ def make_app(hub, args, conf):
                 new = body.get("new", "")
                 if len(new) < Auth.MIN_LEN:
                     return web.json_response({"ok": False, "error": f"Use at least {Auth.MIN_LEN} characters."})
-                # from another device, changing it needs the current one (a stolen session can't lock the owner out)
-                if auth.status()["has_password"] and not auth.local(req) and not auth.check(body.get("current", "")):
+                # changing it needs the current one, from anywhere: a stolen session can't lock the owner out, and a
+                # process or page on this machine can't take it over silently. Forgotten: restart the server with
+                # --password NEW (needs this machine's keyboard). Setting the FIRST password stays free.
+                if auth.status()["has_password"] and not auth.check(body.get("current", "")):
                     auth.failed(req.remote)
                     return web.json_response({"ok": False, "error": "The current password is wrong."})
                 auth.set_password(new)
@@ -2084,7 +2132,20 @@ def make_app(hub, args, conf):
             hub.ndi.stop_all()
         MlxRuntime.stop()
 
-    app = web.Application()
+    extra_hosts = [args.ip or ""] + os.environ.get("LT_HOSTS", "").split(",")
+
+    @web.middleware
+    async def guard(req, handler):
+        if not host_ok(req.host, extra_hosts):
+            log(f"[auth] refused Host {req.host!r} from {req.remote} (DNS rebinding?)")
+            raise web.HTTPMisdirectedRequest(text="Unknown host name")
+        upgrade = req.headers.get("Upgrade", "").lower() == "websocket"
+        if (req.method not in ("GET", "HEAD", "OPTIONS") or upgrade) and cross_site(req):
+            log(f"[auth] refused cross-site {req.method} {req.path} from Origin {req.headers.get('Origin')!r}")
+            raise web.HTTPForbidden(text="Cross-site request refused")
+        return await handler(req)
+
+    app = web.Application(middlewares=[guard])
     app.on_startup.append(on_start)
     app.on_shutdown.append(on_stop)
     r = app.router
