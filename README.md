@@ -3,8 +3,9 @@
 Audio in → VAD → Whisper (MLX) → Argos or local LLM (Ollama) → Control, vMix/OBS overlay, audience phones, SRT.
 
 ## Download (testers)
-**[Download the current version](https://github.com/KLEIN8492/LiveTransaleBeta/releases/latest)**
-(macOS `.pkg`/`.dmg`, Windows `.exe`, Linux `.tar.gz`) — this link always opens the newest release. Earlier versions stay listed under
+LiveTranslate is a **beta — still in testing**: try it at rehearsals before relying on it at a show.
+**[Download the current beta](https://github.com/KLEIN8492/LiveTransaleBeta/releases/latest)**
+(macOS `.pkg`/`.dmg`, Windows `.exe`, Linux `.tar.gz`) — this link always opens the newest beta. Earlier versions stay listed under
 [Releases](https://github.com/KLEIN8492/LiveTransaleBeta/releases) as a version history — install the current one.
 
 ## Installing on a machine (hand-out installer)
