@@ -4,9 +4,10 @@ imports server.py against a throwaway data folder.
 
     .venv/bin/python tests/test_storage.py
 """
-import os, stat, sys, tempfile
+import atexit, os, shutil, stat, sys, tempfile
 
 DATA = tempfile.mkdtemp(prefix="lt-storage-")
+atexit.register(shutil.rmtree, DATA, True)  # leave nothing behind (it holds a test config and sessions)
 os.environ["LT_DATA"] = DATA
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import server as S  # noqa: E402
